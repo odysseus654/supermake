@@ -560,10 +560,10 @@ if __name__ == '__main__':
 ##					print env.assetsByType[assetType][key].details
 	chain = goal.findChain()
 
-	availChain = []
+	availChain = set()
 	for element in chain:
 		if not goal.getUnresolvedDependancies(element, env):
-			availChain.append(element)
+			availChain.add(element)
 
 	print str(len(availChain)) + " path(s) found"
 	for element in availChain:

@@ -149,59 +149,61 @@ class Goal(object):
 					return foundAsset
 		return None
 
-	# (development-quality) - what steps can we do to get to an asset with the specified pattern?
+	# what steps can we do to get to an asset with the specified pattern?
 	def findChain(self, env = None):
 		if env is not None:
 			localAsset = self.isDependancyResolved(self.placeholder, env)
 			if localAsset is not None:
-				return [ localAsset ]
+				result = set()
+				result.add(localAsset);
+				return result
 		return self.findChainBlindly(env)
 	
-	# (development-quality) - same as findChain, except don't look for already-existing assets
+	# same as findChain, except don't look for already-existing assets
 	def findChainBlindly(self, env = None):
-		specs = []
+		specs = set()
 		chains = self.transformSearch(self.placeholder)
 		while chains:
 			for element in chains:
 				#print "deps came back for " + str(element)
 				depends = self.getUnresolvedDependancies(element, env)
 				if not depends or env is None:
-					specs.append(element)
+					specs.add(element)
 			chains = self.transformExtend(chains, env)
 		return specs
 
 	# what requirements does the spec have that are not satisfied by the env (if specified) ?
 	def getUnresolvedDependancies(self, spec, env = None):
-		depends = []
+		depends = set()
 		if spec.requires is not None:
 			for val in spec.requires:
 				if env is None or not self.isDependancyResolved(val, env):
-					depends.append(val)
+					depends.add(val)
 		if spec.consumes is not None:
 			for val in spec.consumes:
 				if env is None or not self.isDependancyResolved(val, env):
-					depends.append(val)
+					depends.add(val)
 		if spec.locks is not None:
 			for val in spec.locks:
 				if env is None or not self.isDependancyResolved(val, env):
-					depends.append(val)
+					depends.add(val)
 		return depends
 		
 	def transformSearch(self, phAsset):
 		#global avail_transforms		not necessary as we're only reading?
-		specs = []
+		specs = set()
 		for transform in avail_transforms:
 			spec = transform.spec()
 			assert(spec is not None)
 			if spec.canProduce(phAsset):
 				if spec.transforms is None:
 					spec.transforms = [ transform ]
-				specs.append(spec)
+				specs.add(spec)
 		return specs
 		
 	# given a list of specs, attempt to find other transforms to add onto it to extend the possible chain
 	def transformExtend(self, specs, env = None):
-		extendedSpecs = []
+		extendedSpecs = set()
 		for spec in specs:
 			#print "trying to extend " + str(spec)
 			deps = self.getUnresolvedDependancies(spec, env)
@@ -209,8 +211,8 @@ class Goal(object):
 				theseSpecs = self.transformSearch(dep)
 				for thisSpec in theseSpecs:
 					if thisSpec.joinableAsChild(spec):
-						#print "COMBINE " + str(thisSpec) + " + " + str(spec)
+						print "COMBINE " + str(thisSpec) + " + " + str(spec)
 						combinedSpec = thisSpec.combineAsChild(spec)
-						#print "COMBINE-result " + str(combinedSpec)
-						extendedSpecs.append(combinedSpec)
+						print "COMBINE-result " + str(combinedSpec)
+						extendedSpecs.add(combinedSpec)
 		return extendedSpecs

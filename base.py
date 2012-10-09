@@ -60,6 +60,18 @@ class TransformSpec(object):
 		if self.transforms is not None:
 			result = result +  'transforms=' + str(self.transforms)
 		return result + '>'
+
+	def __key(self):
+		if self.transforms is not None:
+			return tuple(self.transforms)
+		return None
+	def __ne__(self, other):
+		return self.__key() != other.__key()
+	def __eq__(self, other):
+		return self.__key() == other.__key()
+	def __hash__(self):
+		return hash(self.__key())
+
 	def copy(self):
 		copy = TransformSpec()
 		if self.requires is not None:
