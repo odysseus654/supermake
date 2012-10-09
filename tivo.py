@@ -13,8 +13,6 @@ class TivoServerListenerTransform(Transform):
 	def spec(self):
 		return self.SPEC
 	def task(self,env,input,output):
-		if input is not None:
-			raise ArgumentError('inappropriate input arguments')
 		return self.newTask(TivoServerListenerTask(env))
 	
 class TivoServerListenerTask(ThreadTask):
@@ -34,17 +32,13 @@ class TivoServerListenerTask(ThreadTask):
 		self.threadStatus = ThreadTask.thrCANCELLING
 		
 	def serverSeen(self, id, attrs):
-		if (id in self.tivoStatus) and (self.tivoStatus[id]['attr'] == attrs):
+		if id in self.tivoStatus:
 			self.tivoStatus[id]['lastSeen'] = time.time()
 			if 'stale' in self.tivoStatus[id]:
 				del self.tivoStatus[id]['stale']
 				self.tivoStatus[id]['asset'].delFlag(Asset.flagSTALE)
-		elif id in self.tivoStatus:				# this only happens if something serious changed, like a version upgrade or the tivo rebooted or something
-			self.tivoStatus[id]['lastSeen'] = time.time()
-			if 'stale' in self.tivoStatus[id]:
-				del self.tivoStatus[id]['stale']
-				self.tivoStatus[id]['asset'].delFlag(Asset.flagSTALE)
-			self.tivoStatus[id]['asset'].resetAttrs(attrs)
+			if self.tivoStatus[id]['attr'] != attrs:	# this only happens if something serious changed, like a version upgrade or the tivo rebooted or something
+				self.tivoStatus[id]['asset'].resetAttrs(attrs)
 		else:
 			newServer = TivoServer(attrs)
 			self.tivoStatus[id] = {'attr': attrs, 'lastSeen': time.time(), 'asset': newServer }
@@ -251,35 +245,35 @@ class TivoServerQuery(object):
 	def getVideoList(self, startAddr):
 		req = self.openXmlPath(startAddr)
 		if 'TiVoContainer' in req:
-			if type(req['TiVoContainer']['Item']) == type([]):
+			req = req['TiVoContainer']
+			if type(req['Item']) == type([]):
 				thisReq = req
 				while 1:
-					if int(thisReq['TiVoContainer']['ItemStart']) + int(thisReq['TiVoContainer']['ItemCount']) < int(thisReq['TiVoContainer']['Details']['TotalItems']):
+					if int(thisReq['ItemStart']) + int(thisReq['ItemCount']) < int(thisReq['Details']['TotalItems']):
 						newAddr = dict(startAddr)
-						newAddr['args']['AnchorOffset'] = int(thisReq['TiVoContainer']['ItemStart']) + self.REQUEST_SIZE
+						newAddr['args']['AnchorOffset'] = int(thisReq['ItemStart']) + self.REQUEST_SIZE
 						thisReq = self.openXmlPath(newAddr)
 						if 'TiVoContainer' in thisReq:
-							if type(thisReq['TiVoContainer']['Item']) == type([]):
-								req['TiVoContainer']['Item'] = req['TiVoContainer']['Item'] + thisReq['TiVoContainer']['Item']
-							else:
-								req['TiVoContainer']['Item'] = req['TiVoContainer']['Item'] + [thisReq['TiVoContainer']['Item']]
-							req['TiVoContainer']['ItemCount'] = int(req['TiVoContainer']['ItemCount']) + int(thisReq['TiVoContainer']['ItemCount'])
+							thisReq = thisReq['TiVoContainer']
+							if type(thisReq['Item']) != type([]):
+								thisReq['Item'] = [thisReq['Item']]
+							req['Item'] = req['Item'] + thisReq['Item']
+							req['ItemCount'] = int(req['ItemCount']) + int(thisReq['ItemCount'])
+						else:
+							break	# protocol fault?
 					else:
 						break
-			contType = req['TiVoContainer']['Details']['ContentType']
+			contType = req['Details']['ContentType']
 			if contType == 'x-tivo-container/tivo-server':
 				return self.handleFolderList(req)
 			elif contType == 'x-tivo-container/tivo-videos':
 				return self.handleVideoList(req)
 
 	def handleFolderList(self, req):
-		if type(req['TiVoContainer']['Item']) == type([]):
-			for folder in req['TiVoContainer']['Item']:
-				contType = folder['Details']['ContentType']
-				if contType == 'x-tivo-container/tivo-videos':
-					return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']))
-		else:
-			folder = req['TiVoContainer']['Item']
+		folders = req['Item']
+		if type(folders) != type([]):
+			folders = [folders]
+		for folder in folders:
 			contType = folder['Details']['ContentType']
 			if contType == 'x-tivo-container/tivo-videos':
 				return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']))
@@ -291,33 +285,29 @@ class TivoServerQuery(object):
 
 	def handleVideoList(self, req):
 		videos = {}
-		if type(req['TiVoContainer']['Item']) == type([]):
-			for item in req['TiVoContainer']['Item']:
-				if 'Available' in item['Links']['Content'] and item['Links']['Content']['Available'] == 'No':
-					pass
-				else:
-					videos[self.tivoId(item)] = self.handleVideo(item)
-		else:
-			item = req['TiVoContainer']['Item']
+		items = req['Item']
+		if type(items) != type([]):
+			items = [items]
+		for item in req['Item']:
 			if 'Available' in item['Links']['Content'] and item['Links']['Content']['Available'] == 'No':
 				pass
 			else:
-				videos[self.tivoId(item)] = self.handleVideo(item)
+				videos[self.tivoId(item)] = self.handleVideo(item['Details'])
 		return videos
 
 	def handleVideo(self, item):
-		if 'SourceSize' in item['Details']:
-			item['Details']['SourceSize'] = int(item['Details']['SourceSize'])
-		if 'Duration' in item['Details']:
-			item['Details']['Duration'] = int(item['Details']['Duration'])
-		if 'SourceChannel' in item['Details']:
-			item['Details']['SourceChannel'] = int(item['Details']['SourceChannel'])
-		if 'ByteOffset' in item['Details']:
-			item['Details']['ByteOffset'] = int(item['Details']['ByteOffset'])
-		if 'EpisodeNumber' in item['Details']:
-			item['Details']['EpisodeNumber'] = int(item['Details']['EpisodeNumber'])
-		if 'CaptureDate' in item['Details']:
-			item['Details']['CaptureDate'] = int(float.fromhex(item['Details']['CaptureDate']))
+		if 'SourceSize' in item:
+			item['SourceSize'] = int(item['SourceSize'])
+		if 'Duration' in item:
+			item['Duration'] = int(item['Duration'])
+		if 'SourceChannel' in item:
+			item['SourceChannel'] = int(item['SourceChannel'])
+		if 'ByteOffset' in item:
+			item['ByteOffset'] = int(item['ByteOffset'])
+		if 'EpisodeNumber' in item:
+			item['EpisodeNumber'] = int(item['EpisodeNumber'])
+		if 'CaptureDate' in item:
+			item['CaptureDate'] = int(float.fromhex(item['CaptureDate']))
 		return item
 
 ###############################################################################
@@ -457,8 +447,8 @@ class TivoVideo(Asset):
 class DownloadTivoVideo(Transform):
 	SPEC = base.TransformSpec()
 	SPEC.locks = [AssetPlaceholder('TivoServer', {'id': base.TransformPlaceholder(), 'mediaKey': base.TransformPlaceholder() })]
-	SPEC.requires = [AssetPlaceholder('TivoVideo', {'server': SPEC.locks[0].id, 'details': base.TransformPlaceholder() })]
-	SPEC.produces = [AssetPlaceholder('TivoVideoDownload', {'mediaKey': SPEC.locks[0].mediaKey, 'details': SPEC.requires[0].details, '!isFile':1, 'fileExt':'tivo' })]
+	SPEC.requires = [AssetPlaceholder('TivoVideo', {'server': SPEC.locks[0].id })]
+	SPEC.produces = [AssetPlaceholder('TivoVideoDownload', {'mediaKey': SPEC.locks[0].mediaKey, '!isFile':1, 'fileExt':'tivo' })]
 	
 	def __init__(self):
 		Transform.__init__(self)
@@ -470,7 +460,11 @@ class DownloadTivoVideo(Transform):
 		query = TivoServerQuery(mediaKey)
 		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
 
-	def task(self,input,output):
+	def task(self,env,input,output):
+		if input is not None:
+			raise ArgumentError('inappropriate input arguments')
+		if output is not None:
+			raise ArgumentError('inappropriate output arguments')
 		server = input[0]
 		infile = input[1]
 		outfile = output[0]
@@ -493,14 +487,18 @@ class DownloadTivoVideo(Transform):
 
 class DecryptTivoVideoDSD(base.ToolchainTransform):
 	SPEC = base.TransformSpec()
-	SPEC.requires = [AssetPlaceholder('TivoVideoDownload', {'details': base.TransformPlaceholder()})]
-	SPEC.produces = [AssetPlaceholder('MpegVideo', {'!isFile':1, 'fileExt': 'mpg', 'meta': SPEC.requires[0].details })]
+	SPEC.requires = [AssetPlaceholder('TivoVideoDownload', {'mediaKey': base.TransformPlaceholder(), '!isFile':1, 'fileExt':'tivo'})]
+	SPEC.produces = [AssetPlaceholder('MpegVideo', {'!isFile':1, 'fileExt': 'mpg' })]
 	TOOL = base.Tool({'name':'DirectShow Dump','cmd':'DSDCmd','path':'c:\program files\DirectShow Dump','url':'http://prish.com/etivo/tbr.htm'})
 	
 	def spec(self):
 		return self.SPEC
 		
-	def task(self,input,output):
+	def task(self,env,input,output):
+		if input is not None:
+			raise ArgumentError('inappropriate input arguments')
+		if output is not None:
+			raise ArgumentError('inappropriate output arguments')
 		infile = input[0]
 		outfile = output[0]
 		self.callTool(self.toolPath + ' -s "%s" -t "%s"' % (infile.filePath, outfile.filePath))
@@ -512,14 +510,18 @@ class DecryptTivoVideoDSD(base.ToolchainTransform):
 
 class DecryptTivoVideoTD(base.ToolchainTransform):
 	SPEC = base.TransformSpec()
-	SPEC.requires = [AssetPlaceholder('TivoVideoDownload', {'mediaKey': base.TransformPlaceholder(), 'details': base.TransformPlaceholder()})]
-	SPEC.produces = [AssetPlaceholder('MpegVideo', {'!isFile':1, 'fileExt': 'mpg', 'meta': SPEC.requires[0].details })]
+	SPEC.requires = [AssetPlaceholder('TivoVideoDownload', {'mediaKey': base.TransformPlaceholder(), '!isFile':1, 'fileExt':'tivo'})]
+	SPEC.produces = [AssetPlaceholder('MpegVideo', {'!isFile':1, 'fileExt': 'mpg' })]
 	TOOL = base.Tool({'name':'tivodecode','cmd':'tivodecode','url':'http://tivodecode.sourceforge.net'})
 	
 	def spec(self):
 		return self.SPEC
 		
-	def task(self,input,output):
+	def task(self,env,input,output):
+		if input is not None:
+			raise ArgumentError('inappropriate input arguments')
+		if output is not None:
+			raise ArgumentError('inappropriate output arguments')
 		infile = input[0]
 		outfile = output[0]
 		self.callTool(self.toolPath + ' --mak "%s" --out "%s" "%s"' % (infile.mediaKey, outfile.filePath, infile.filePath))

@@ -77,7 +77,7 @@ class TransformSpec(object):
 		if self.produces is None:
 			return None
 		for val in self.produces:
-			if val.simpleMatch(asset):
+			if asset.satisfiedBy(val):
 				return val
 		return None
 	def joinableAsChild(self, child):
@@ -110,19 +110,19 @@ class TransformSpec(object):
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
 				if produces is not None:
-					val.instantiateAsset(produces, replList)
+					val.mergeAsset(produces, replList)
 		if tempChild.consumes is not None:
 			for val in tempChild.consumes:
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
 				if produces is not None:
-					val.instantiateAsset(produces, replList)
+					val.mergeAsset(produces, replList)
 		if tempChild.locks is not None:
 			for val in tempChild.locks:
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
 				if produces is not None:
-					val.instantiateAsset(produces, replList)
+					val.mergeAsset(produces, replList)
 		
 		# the following rules are the results of me drawing everything up on a grid, hopefully they make sense
 		#		consumes		+		consumes		->		consumes(+copy)
@@ -234,7 +234,7 @@ class TransformSpec(object):
 			newSpec.transforms.append(child)
 
 		return newSpec
-
+		
 class AssetPlaceholder(Asset):
 	def __init__(self, type, attr = None):
 		Asset.__init__(self, type)
@@ -260,22 +260,27 @@ class AssetPlaceholder(Asset):
 		for attr in self.attr:
 			hashResult = hashResult ^ hash(attr)
 		return hashResult
-	def simpleMatch(self, other):
-		if other.type != self.type:
+	def satisfiedBy(self, target):
+		if target.type != self.type:
 			return False
 		for attr in self.attr:
-			if not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(other.attr[attr], TransformPlaceholder) and self.attr[attr] != other.attr[attr]:
+			if attr not in target.attr:
+				return False
+			if not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(target.attr[attr], TransformPlaceholder) and self.attr[attr] != target.attr[attr]:
 				return False
 		return True
 	def instantiatePlaceholder(self, replList):
 		for attr in self.attr:
 			if self.attr[attr] in replList:
 				self.attr[attr] = replList[self.attr[attr]]
-	def instantiateAsset(self, other, replList = None):
+	def mergeAsset(self, other, replList = None):
 		for attr in self.attr:
 			if isinstance(self.attr[attr], TransformPlaceholder) and attr in other.attr:
 				if replList is not None:
 					replList[self.attr[attr]] = other.attr[attr]
+				self.attr[attr] = other.attr[attr]
+		for attr in other.attr:
+			if attr not in self.attr:
 				self.attr[attr] = other.attr[attr]
 
 class TransformPlaceholder(object):

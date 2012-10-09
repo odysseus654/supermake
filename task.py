@@ -144,9 +144,9 @@ class Goal(object):
 		assets = env.getAssetsByType(phAsset.type)
 		if assets != None:
 			for assetKey in assets.keys():
-				phAsset = assets[assetKey]
-				if phAsset.simpleMatch(phAsset):
-					return phAsset
+				foundAsset = assets[assetKey]
+				if phAsset.satisfiedBy(foundAsset):
+					return foundAsset
 		return None
 
 	# (development-quality) - what steps can we do to get to an asset with the specified pattern?
@@ -210,5 +210,7 @@ class Goal(object):
 				for thisSpec in theseSpecs:
 					if thisSpec.joinableAsChild(spec):
 						#print "COMBINE " + str(thisSpec) + " + " + str(spec)
-						extendedSpecs.append(thisSpec.combineAsChild(spec))
+						combinedSpec = thisSpec.combineAsChild(spec)
+						#print "COMBINE-result " + str(combinedSpec)
+						extendedSpecs.append(combinedSpec)
 		return extendedSpecs
