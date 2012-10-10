@@ -549,22 +549,31 @@ if __name__ == '__main__':
 	env = base.Environment()
 	goal = task.Goal(base.AssetPlaceholder('MpegVideo'))
 	tasks = task.TaskController()
-#	tasks.addTask(TivoServerListenerTask(env))
-#	while True:
-#		tasks.handleMessages(True, 30)
-#		tasks.dump()
-#		for assetType in env.assetsByType:
-#			for key in env.assetsByType[assetType]:
-#				print env.assetsByType[assetType][key]
-##				if assetType == 'TivoVideo':
-##					print env.assetsByType[assetType][key].details
+
 	chain = goal.findChain()
 
 	availChain = set()
+	nextStep = set()
 	for element in chain:
 		if not goal.getUnresolvedDependancies(element, env):
 			availChain.add(element)
+			nextStep.add(element.transforms[0])
 
 	print str(len(availChain)) + " path(s) found"
-	for element in availChain:
-		print element
+	print str(len(nextStep)) + " steps(s) identified"
+
+	for step in nextStep:
+		tasks.addTask(step.task(env,None,None))
+		
+	try:
+		while True:
+			tasks.handleMessages(True, 30)
+			tasks.dump()
+			for assetType in env.assetsByType:
+				for key in env.assetsByType[assetType]:
+					print env.assetsByType[assetType][key]
+	#				if assetType == 'TivoVideo':
+	#					print env.assetsByType[assetType][key].details
+	finally:
+		print "Requesting shutdown..."
+		tasks.stop()

@@ -30,15 +30,16 @@ class Transform(object):
 	def task(self):
 		pass
 	def newTask(self, task):
-		id = task.id()
-		if id in self.tasks:
-			return self.tasks[id]
+		taskId = id(task)
+		if taskId in self.tasks:
+			return self.tasks[taskId]
 		task.addObserver(self.__notify)
-		self.tasks[id] = task
+		self.tasks[taskId] = task
 		return task
 	def __notify(self, task, msg):
-		if task in self.tasks and msg.type == task.Notification.ntSTATUS and msg.value != task.Task.tsRUNNING:
-			self.tasks.remove(task)
+		taskId = id(task)
+		if taskId in self.tasks and msg.type == task.Notification.ntSTATUS and msg.value != task.Task.tsRUNNING:
+			self.tasks.remove(taskId)
 		
 class TransformSpec(object):
 	def __init__(self, attr = {}):
@@ -94,6 +95,16 @@ class TransformSpec(object):
 	def joinableAsChild(self, child):
 		if self.produces is None:
 			return False
+
+		# with the "throw everything against the wall" findChainBlindly() does we can come
+		# up with some really weird transforms.  This is an attempt to block any out-of-order
+		# transforms by preventing two transformations to be combined if they each produce
+		# something the other requires
+		if self.requires is not None:
+			for val in self.requires:
+				if child.canProduce(val) is not None:
+					return False
+
 		if child.requires is not None:
 			for val in child.requires:
 				if self.canProduce(val) is not None:
@@ -337,11 +348,17 @@ class Environment(object):
 	def declareAsset(self, obj):
 		if not(obj.type in self.assetsByType):
 			self.assetsByType[obj.type] = {}
-		self.assetsByType[obj.type][obj.ident()] = obj
+		ident = obj.ident()
+		if not ident in self.assetsByType[obj.type]:
+			self.assetsByType[obj.type][ident] = obj
+			print "new asset: " + repr(obj)
 
 	def undeclareAsset(self, obj):
 		if obj.type in self.assetsByType:
-			del self.assetsByType[obj.type][obj.ident()]
+			ident = obj.ident()
+			if ident in self.assetsByType[obj.type]:
+				del self.assetsByType[obj.type][ident]
+				print "deleted asset: " + repr(obj)
 
 	def getAssetsByType(self, type):
 		if type in self.assetsByType:

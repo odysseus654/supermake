@@ -108,14 +108,15 @@ class TaskController(object):
 	def __init__(self):
 		self.messages = MessageQueue()
 		self.observers = Observable()
-		self.tasks = set()
+		self.tasks = {}
 	def notify(self, task, msg):
 		self.messages.enqueue(msg)
 	def addTask(self, task):
-		if task in self.tasks:
+		taskId = id(task)
+		if taskId in self.tasks:
 			raise RuntimeError('Task is already a member of this controller');
 		task.addObserver(self.notify)
-		self.tasks.add(task)
+		self.tasks[taskId] = task
 		task.start()
 	def addObserver(self, obj):
 		self.observers.add(obj)
@@ -127,9 +128,14 @@ class TaskController(object):
 	def dump(self):
 		print len(self.tasks), "tasks listed"
 		idx = 1
-		for task in self.tasks:
+		for taskId in self.tasks:
+			task = self.tasks[taskId]
 			print "%d: %s (%s)" % (idx, task.name(), Task.STATUS_STRING[task.status])
 			idx += 1
+	def stop(self):
+		for taskId in self.tasks:
+			task = self.tasks[taskId]
+			task.stop()
 
 ###############################################################################
 
@@ -210,8 +216,8 @@ class Goal(object):
 				theseSpecs = self.transformSearch(dep)
 				for thisSpec in theseSpecs:
 					if thisSpec.joinableAsChild(spec):
-						print "COMBINE " + str(thisSpec) + " + " + str(spec)
+						#print "COMBINE " + str(thisSpec) + " + " + str(spec)
 						combinedSpec = thisSpec.combineAsChild(spec)
-						print "COMBINE-result " + str(combinedSpec)
+						#print "COMBINE-result " + str(combinedSpec)
 						extendedSpecs.add(combinedSpec)
 		return extendedSpecs
