@@ -43,9 +43,17 @@ class Transform(object):
 class TransformSpec(object):
 	def __init__(self, attr = {}):
 		self.requires = attr.get('requires', None)
+		if self.requires is not None:
+			self.requires = frozenset(self.requires)
 		self.consumes = attr.get('consumes', None)
+		if self.consumes is not None:
+			self.consumes = frozenset(self.consumes)
 		self.locks = attr.get('locks', None)
+		if self.locks is not None:
+			self.locks = frozenset(self.locks)
 		self.produces = attr.get('produces', None)
+		if self.produces is not None:
+			self.produces = frozenset(self.produces)
 		self.transforms = None
 	def __repr__(self):
 		result = '<Transform:'
@@ -61,29 +69,20 @@ class TransformSpec(object):
 			result = result +  'transforms=' + str(self.transforms)
 		return result + '>'
 
-	def __key(self):
-		if self.transforms is not None:
-			return tuple(self.transforms)
-		return None
 	def __ne__(self, other):
-		return self.__key() != other.__key()
+		return self.transforms != other.transforms
 	def __eq__(self, other):
-		return self.__key() == other.__key()
+		return self.transforms == other.transforms
 	def __hash__(self):
-		return hash(self.__key())
+		return hash(self.transforms)
 
 	def copy(self):
 		copy = TransformSpec()
-		if self.requires is not None:
-			copy.requires = list(self.requires)
-		if self.consumes is not None:
-			copy.consumes = list(self.consumes)
-		if self.locks is not None:
-			copy.locks = list(self.locks)
-		if self.produces is not None:
-			copy.produces = list(self.produces)
-		if self.transforms is not None:
-			copy.transforms = list(self.transforms)
+		copy.requires = self.requires
+		copy.consumes = self.consumes
+		copy.locks = self.locks
+		copy.produces = self.produces
+		copy.transforms = self.transforms
 		return copy
 	def canProduce(self, asset):
 		if self.produces is None:
@@ -118,18 +117,21 @@ class TransformSpec(object):
 		# the link is what the parent produces, so link the two together
 		replList = {}
 		if tempChild.requires is not None:
+			tempChild.requires = list(tempChild.requires)
 			for val in tempChild.requires:
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
 				if produces is not None:
 					val.mergeAsset(produces, replList)
 		if tempChild.consumes is not None:
+			tempChild.consumes = list(tempChild.consumes)
 			for val in tempChild.consumes:
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
 				if produces is not None:
 					val.mergeAsset(produces, replList)
 		if tempChild.locks is not None:
+			tempChild.locks = list(tempChild.locks)
 			for val in tempChild.locks:
 				val.instantiatePlaceholder(replList)
 				produces = tempParent.canProduce(val)
@@ -164,6 +166,7 @@ class TransformSpec(object):
 					newSpec.consumes = []
 				newSpec.consumes.append(val)
 		if tempChild.produces is not None:
+			tempChild.produces = list(tempChild.produces)
 			for val in tempChild.produces:
 				val.instantiatePlaceholder(replList)
 				if newSpec.produces is None:
@@ -244,6 +247,17 @@ class TransformSpec(object):
 			newSpec.transforms.extend(child.transforms)
 		else:
 			newSpec.transforms.append(child)
+
+		if newSpec.requires is not None:
+			newSpec.requires = frozenset(newSpec.requires)
+		if newSpec.consumes is not None:
+			newSpec.consumes = frozenset(newSpec.consumes)
+		if newSpec.locks is not None:
+			newSpec.locks = frozenset(newSpec.locks)
+		if newSpec.produces is not None:
+			newSpec.produces = frozenset(newSpec.produces)
+		if newSpec.transforms is not None:
+			newSpec.transforms = tuple(newSpec.transforms)
 
 		return newSpec
 		

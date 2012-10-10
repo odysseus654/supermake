@@ -154,8 +154,7 @@ class Goal(object):
 		if env is not None:
 			localAsset = self.isDependancyResolved(self.placeholder, env)
 			if localAsset is not None:
-				result = set()
-				result.add(localAsset);
+				result = set([localAsset]);
 				return result
 		return self.findChainBlindly(env)
 	
@@ -197,7 +196,7 @@ class Goal(object):
 			assert(spec is not None)
 			if spec.canProduce(phAsset):
 				if spec.transforms is None:
-					spec.transforms = [ transform ]
+					spec.transforms = tuple([ transform ])
 				specs.add(spec)
 		return specs
 		
