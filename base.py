@@ -1,10 +1,5 @@
 import copy
 
-class Observable(set):
-	def notifyObservers(self, arg):
-		for observer in self:
-			observer(self, arg)
-
 class Asset(object):
 	def __init__(self, type):
 		self.type = type
@@ -24,22 +19,13 @@ class Asset(object):
 
 class Transform(object):
 	def __init__(self):
-		self.tasks = {}
+		pass
 	def spec(self):
 		pass
-	def task(self):
+	def task(self,env,input,output):
 		pass
 	def newTask(self, task):
-		taskId = id(task)
-		if taskId in self.tasks:
-			return self.tasks[taskId]
-		task.addObserver(self.__notify)
-		self.tasks[taskId] = task
 		return task
-	def __notify(self, task, msg):
-		taskId = id(task)
-		if taskId in self.tasks and msg.type == task.Notification.ntSTATUS and msg.value != task.Task.tsRUNNING:
-			self.tasks.remove(taskId)
 		
 class TransformSpec(object):
 	def __init__(self, attr = {}):
@@ -96,7 +82,7 @@ class TransformSpec(object):
 		if self.produces is None:
 			return False
 
-		# with the "throw everything against the wall" findChainBlindly() does we can come
+		# with the "throw everything against the wall" findChain() does we can come
 		# up with some really weird transforms.  This is an attempt to block any out-of-order
 		# transforms by preventing two transformations to be combined if they each produce
 		# something the other requires
@@ -349,16 +335,14 @@ class Environment(object):
 		if not(obj.type in self.assetsByType):
 			self.assetsByType[obj.type] = {}
 		ident = obj.ident()
-		if not ident in self.assetsByType[obj.type]:
+		if not (ident in self.assetsByType[obj.type]):
 			self.assetsByType[obj.type][ident] = obj
-			print "new asset: " + repr(obj)
 
 	def undeclareAsset(self, obj):
 		if obj.type in self.assetsByType:
 			ident = obj.ident()
 			if ident in self.assetsByType[obj.type]:
 				del self.assetsByType[obj.type][ident]
-				print "deleted asset: " + repr(obj)
 
 	def getAssetsByType(self, type):
 		if type in self.assetsByType:

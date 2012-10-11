@@ -96,6 +96,8 @@ class TivoServerListenerTask(ThreadTask):
 				self.handleBcast(address[0], message)
 			except socket.timeout:
 				pass
+		s.shutdown(socket.SHUT_RDWR)
+		s.close()
 
 ###############################################################################
 class SimpleXmlObject(object):
@@ -327,7 +329,7 @@ class TivoServer(Asset):
 	def name(self):
 		machine = self.id
 		if 'machine' in self.attr:
-			machine = self.attr['machine']
+			machine = self.attr['machine'] + " (" + self.id + ")"
 		return machine
 
 	def tivoAddr(self):
@@ -546,24 +548,23 @@ task.avail_transforms.add(DecryptTivoVideoTD())
 
 ###############################################################################
 if __name__ == '__main__':
-	env = base.Environment()
+	env = task.ObservableEnvironment()
 	goal = task.Goal(base.AssetPlaceholder('MpegVideo'))
-	tasks = task.TaskController()
+	tasks = task.TaskController(env)
+	tasks.addTask(task.GoalTask(env, goal))
 
-	chain = goal.findChain()
-
-	availChain = set()
-	nextStep = set()
-	for element in chain:
-		if not goal.getUnresolvedDependancies(element, env):
-			availChain.add(element)
-			nextStep.add(element.transforms[0])
-
-	print str(len(availChain)) + " path(s) found"
-	print str(len(nextStep)) + " steps(s) identified"
-
-	for step in nextStep:
-		tasks.addTask(step.task(env,None,None))
+#	chain = goal.findChain()
+#
+#	availChain = set()
+#	nextStep = set()
+#	for element in chain:
+#		if not goal.getUnresolvedDependancies(element, env):
+#			availChain.add(element)
+#			nextStep.add(element.transforms[0])
+#
+#	print str(len(nextStep)) + " steps(s) identified from " + str(len(availChain)) + " available paths(s)"
+#	for step in nextStep:
+#		tasks.addTask(step.task(env,None,None))
 		
 	try:
 		while True:

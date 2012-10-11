@@ -1,5 +1,5 @@
 import threading, Queue
-from base import Observable
+from base import Environment
 
 try:
     avail_transforms
@@ -8,9 +8,14 @@ except NameError:
 
 ###############################################################################
 
+class Observable(set):
+	def notifyObservers(self, arg):
+		for observer in self:
+			observer(self, arg)
+
 class Notification(object):
-	ntSTATUS, ntPROGRESS = range(2)
-	TYPE_STRING = { ntSTATUS:'status', ntPROGRESS:'progress' }
+	ntSTATUS, ntPROGRESS, ntNEWASSET, ntDEADASSET = range(4)
+	TYPE_STRING = { ntSTATUS:'status', ntPROGRESS:'progress', ntNEWASSET:'new asset', ntDEADASSET:'dead asset' }
 	
 	def __init__(self, task, type, value):
 		self.task = task
@@ -47,6 +52,29 @@ class Progress(object):
 		self.pos = pos
 		self.max = max
 	
+class ObservableEnvironment(Environment):
+	def __init__(self):
+		Environment.__init__(self)
+		self.observers = Observable()
+	def addObserver(self, obj):
+		self.observers.add(obj)
+	def removeObserver(self, obj):
+		self.observers.remove(obj)
+		
+	def declareAsset(self, obj):
+		ident = obj.ident()
+		isNew = not(obj.type in self.assetsByType) or not (ident in self.assetsByType[obj.type])
+		Environment.declareAsset(self, obj)
+		if isNew:
+			self.observers.notifyObservers(Notification(self, Notification.ntNEWASSET, obj))
+
+	def undeclareAsset(self, obj):
+		ident = obj.ident()
+		isDead = (obj.type in self.assetsByType) and (ident in self.assetsByType[obj.type])
+		Environment.undeclareAsset(self, obj)
+		if isDead:
+			self.observers.notifyObservers(Notification(self, Notification.ntDEADASSET, obj))
+
 class Task(object):
 	tsQUEUED, tsRUNNING, tsCOMPLETE, tsCANCELLED, tsFAILED = range(5)
 	STATUS_STRING = { tsQUEUED:'queued', tsRUNNING:'running', tsCOMPLETE:'complete', tsCANCELLED:'cancelled', tsFAILED:'failed' }
@@ -57,12 +85,16 @@ class Task(object):
 		self.observers = Observable()
 	def addObserver(self, obj):
 		self.observers.add(obj)
-	def start(self):
+	def removeObserver(self, obj):
+		self.observers.remove(obj)
+	def start(self, tasks = None):
 		pass
 	def stop(self):
 		pass
 	def name(self):
 		return "Generic Task"
+	def __repr__(self):
+		return "<Task: %s>" % self.name()
 	def statusChanged(self, newStatus):
 		self.status = newStatus
 		self.observers.notifyObservers(Notification(self, Notification.ntSTATUS, newStatus))
@@ -75,15 +107,15 @@ class ThreadTask(Task):
 		Task.__init__(self)
 		self.threadStatus = ThreadTask.thrSTOPPED
 		self.thread = None
-	def start(self):
+	def start(self, tasks = None):
 		if self.thread is None:
-			self.thread = threading.Thread(target=self.threadStart, name=self.name())
+			self.thread = threading.Thread(target=self.__threadStart, name=self.name())
 		if self.threadStatus == ThreadTask.thrSTOPPING:
 			self.thread.join()
 		if not self.thread.isAlive():
 			self.threadStatus = ThreadTask.thrSTARTING
 			self.thread.start()
-	def threadStart(self):
+	def __threadStart(self):
 		self.threadStatus = ThreadTask.thrRUNNING
 		self.statusChanged(Task.tsRUNNING)
 		try:
@@ -103,26 +135,36 @@ class ThreadTask(Task):
 			self.threadStatus = ThreadTask.thrSTOPPING
 	def run(self):
 		pass
+	def __repr__(self):
+		return "<ThreadTask: %s>" % self.name()
 		
 class TaskController(object):
-	def __init__(self):
+	def __init__(self, env = None):
 		self.messages = MessageQueue()
 		self.observers = Observable()
 		self.tasks = {}
-	def notify(self, task, msg):
+		if env is not None:
+			self.observeEnvironment(env)
+	def __notify(self, task, msg):
 		self.messages.enqueue(msg)
 	def addTask(self, task):
 		taskId = id(task)
 		if taskId in self.tasks:
 			raise RuntimeError('Task is already a member of this controller');
-		task.addObserver(self.notify)
+		task.addObserver(self.__notify)
 		self.tasks[taskId] = task
-		task.start()
+		task.start(self)
 	def addObserver(self, obj):
 		self.observers.add(obj)
+	def removeObserver(self, obj):
+		self.observers.remove(obj)
+	def observeEnvironment(self, env):
+		env.addObserver(self.__notify)
+	def unobserveEnvironment(self, env):
+		env.removeObserver(self.__notify)
 	def handleMessages(self, block=False, timeout=None):
-		self.messages.handle(self.onMessage, None, block, timeout)
-	def onMessage(self, msg):
+		self.messages.handle(self.__onMessage, None, block, timeout)
+	def __onMessage(self, msg):
 		print 'Received message: ', msg
 		self.observers.notifyObservers(msg)
 	def dump(self):
@@ -141,44 +183,55 @@ class TaskController(object):
 
 class Goal(object):
 	def __init__(self, ph):
-		assert(ph is not None)
 		self.placeholder = ph
 		
 	# can the specified environment contain something that satisfies this asset requirement?
 	def isDependancyResolved(self, phAsset, env):
 		assert(env is not None)
 		assets = env.getAssetsByType(phAsset.type)
-		if assets != None:
-			for assetKey in assets.keys():
-				foundAsset = assets[assetKey]
-				if phAsset.satisfiedBy(foundAsset):
-					return foundAsset
-		return None
+		if assets is None:
+			return None
+		print "isDependencyResolved: %s" % phAsset
+		for assetKey in assets.keys():
+			foundAsset = assets[assetKey]
+			if phAsset.satisfiedBy(foundAsset):
+				return foundAsset
+
+	def resolveDependancy(self, phAsset, env):
+		assert(env is not None)
+		assets = env.getAssetsByType(phAsset.type)
+		if assets is None:
+			return None
+		results = []
+		for assetKey in assets.keys():
+			foundAsset = assets[assetKey]
+			if phAsset.satisfiedBy(foundAsset):
+				results.add(foundAsset)
+		return results
 
 	# what steps can we do to get to an asset with the specified pattern?
 	def findChain(self, env = None):
 		if env is not None:
 			localAsset = self.isDependancyResolved(self.placeholder, env)
 			if localAsset is not None:
-				result = set([localAsset]);
-				return result
-		return self.findChainBlindly(env)
-	
-	# same as findChain, except don't look for already-existing assets
-	def findChainBlindly(self, env = None):
+				return set([localAsset])
+
 		specs = set()
 		chains = self.transformSearch(self.placeholder)
 		while chains:
 			for element in chains:
 				#print "deps came back for " + str(element)
-				depends = self.getUnresolvedDependancies(element, env)
-				if not depends or env is None:
+				if env is not None:
+					depends = self.getUnresolvedSpecDependancies(element, env)
+					if not depends:
+						specs.add(element)
+				else:
 					specs.add(element)
 			chains = self.transformExtend(chains, env)
 		return specs
 
 	# what requirements does the spec have that are not satisfied by the env (if specified) ?
-	def getUnresolvedDependancies(self, spec, env = None):
+	def getUnresolvedSpecDependancies(self, spec, env = None):
 		depends = set()
 		if spec.requires is not None:
 			for val in spec.requires:
@@ -194,6 +247,29 @@ class Goal(object):
 					depends.add(val)
 		return depends
 		
+	def resolveSpecDependancies(self, spec, env):
+		input = [()]
+		if spec.requires is not None:
+			for val in spec.requires:
+				input = self.__mixSpecDependency(input, val, env)
+		if spec.consumes is not None:
+			for val in spec.consumes:
+				input = self.__mixSpecDependency(input, val, env)
+		if spec.locks is not None:
+			for val in spec.locks:
+				input = self.__mixSpecDependency(input, val, env)
+		return input
+		
+	def __mixSpecDependency(self, input, val, env):
+		newInput = []
+		avail = self.resolveDependancy(val, env)
+		for itemList in input:
+			for availItem in avail:
+				newItem = list(itemList)
+				newItem.add(availItem)
+				newInput.add(tuple(newItem))
+		return newInput
+
 	def transformSearch(self, phAsset):
 		#global avail_transforms		not necessary as we're only reading?
 		specs = set()
@@ -211,7 +287,7 @@ class Goal(object):
 		extendedSpecs = set()
 		for spec in specs:
 			#print "trying to extend " + str(spec)
-			deps = self.getUnresolvedDependancies(spec, env)
+			deps = self.getUnresolvedSpecDependancies(spec, env)
 			for dep in deps:
 				theseSpecs = self.transformSearch(dep)
 				for thisSpec in theseSpecs:
@@ -221,3 +297,43 @@ class Goal(object):
 						#print "COMBINE-result " + str(combinedSpec)
 						extendedSpecs.add(combinedSpec)
 		return extendedSpecs
+
+	def __repr__(self):
+		return "<Goal: %s>" % repr(self.placeholder)
+
+class GoalTask(Task):
+	def __init__(self, env, goal, findAll = True):
+		Task.__init__(self)
+		self.env = env
+		self.goal = goal
+		self.findAll = findAll
+	def start(self, tasks):
+		self.statusChanged(Task.tsRUNNING)
+		self.tasks = tasks
+		tasks.addObserver(self.__notify)
+		self.evaluate()
+	def stop(self):
+		self.statusChanged(Task.tsQUEUED)
+		if self.tasks is not None:
+			self.tasks.removeObserver(self.__notify)
+	def name(self):
+		return "Goal: " + repr(self.goal)
+	def __notify(self, task, msg):
+		if (msg.type == Notification.ntNEWASSET) or (msg.type == Notification.ntDEADASSET):
+			self.evaluate()
+	def evaluate(self):
+		chain = self.goal.findChain(self.env)
+		availChain = set()
+		nextStep = set()
+		for element in chain:
+			print "element: " + repr(element)
+			if not self.goal.getUnresolvedSpecDependancies(element, self.env):
+				availChain.add(element)
+				nextStep.add(element.transforms[0])
+
+		print "%d steps(s) identified from %d available path(s)" % (len(nextStep), len(availChain))
+		for step in nextStep:
+			instances = self.goal.resolveSpecDependancies(step.spec(), self.env)
+			print "big mess: " + repr(instances)
+			for instance in instances:
+				self.tasks.addTask(step.task(self.env,instance,None))
