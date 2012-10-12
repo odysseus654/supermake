@@ -8,6 +8,9 @@ except NameError:
 
 ###############################################################################
 
+class TaskLaunchError(Exception):
+	pass
+
 class Observable(set):
 	def notifyObservers(self, arg):
 		for observer in self:
@@ -62,14 +65,14 @@ class ObservableEnvironment(Environment):
 		self.observers.remove(obj)
 		
 	def declareAsset(self, obj):
-		ident = obj.ident()
+		ident = id(obj)
 		isNew = not(obj.type in self.assetsByType) or not (ident in self.assetsByType[obj.type])
 		Environment.declareAsset(self, obj)
 		if isNew:
 			self.observers.notifyObservers(Notification(self, Notification.ntNEWASSET, obj))
 
 	def undeclareAsset(self, obj):
-		ident = obj.ident()
+		ident = id(obj)
 		isDead = (obj.type in self.assetsByType) and (ident in self.assetsByType[obj.type])
 		Environment.undeclareAsset(self, obj)
 		if isDead:
@@ -359,4 +362,7 @@ class GoalTask(Task):
 			runningTasks = self.tasks.tasksByTransform(step)
 			for instance in instances:
 				if runningTasks is None or not step.isRunning(runningTasks,instance,None):
-					self.tasks.addTask(step.newTask(self.env,instance,None))
+					try:
+						self.tasks.addTask(step.newTask(self.env,instance,None))
+					except TaskLaunchError as e:
+						pass

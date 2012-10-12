@@ -1,7 +1,7 @@
 import socket, traceback, time, thread, urllib2, urllib, urlparse, sys, xml.sax
 import base, task
 from base import Asset, Transform, AssetPlaceholder
-from task import ThreadTask
+from task import ThreadTask, TaskLaunchError
 
 ###############################################################################
 class TivoServerListenerTransform(Transform):
@@ -301,22 +301,23 @@ class TivoServerQuery(object):
 			if 'Available' in item['Links']['Content'] and item['Links']['Content']['Available'] == 'No':
 				pass
 			else:
-				videos[self.tivoId(item)] = self.handleVideo(item['Details'])
+				videos[self.tivoId(item)] = self.handleVideo(item)
 		return videos
 
 	def handleVideo(self, item):
-		if 'SourceSize' in item:
-			item['SourceSize'] = int(item['SourceSize'])
-		if 'Duration' in item:
-			item['Duration'] = int(item['Duration'])
-		if 'SourceChannel' in item:
-			item['SourceChannel'] = int(item['SourceChannel'])
-		if 'ByteOffset' in item:
-			item['ByteOffset'] = int(item['ByteOffset'])
-		if 'EpisodeNumber' in item:
-			item['EpisodeNumber'] = int(item['EpisodeNumber'])
-		if 'CaptureDate' in item:
-			item['CaptureDate'] = int(float.fromhex(item['CaptureDate']))
+		details = item['Details']
+		if 'SourceSize' in details:
+			details['SourceSize'] = int(details['SourceSize'])
+		if 'Duration' in details:
+			details['Duration'] = int(details['Duration'])
+		if 'SourceChannel' in details:
+			details['SourceChannel'] = int(details['SourceChannel'])
+		if 'ByteOffset' in details:
+			details['ByteOffset'] = int(details['ByteOffset'])
+		if 'EpisodeNumber' in details:
+			details['EpisodeNumber'] = int(details['EpisodeNumber'])
+		if 'CaptureDate' in details:
+			details['CaptureDate'] = int(float.fromhex(details['CaptureDate']))
 		return item
 
 ###############################################################################
@@ -328,9 +329,6 @@ class TivoServer(Asset):
 	def resetAttrs(self, attr):
 		self.attr = attr
 		self.id = attr['identity']
-
-	def ident(self):
-		return self.id
 
 	def name(self):
 		machine = self.id
@@ -351,11 +349,9 @@ class TivoServer(Asset):
 	def satisfies(self, require):
 		if self.type != require.type:
 			return False
-		if isinstance(require, AssetPlaceholder):
-			if 'id' in require.attr and not isinstance(require.attr['id'], base.TransformPlaceholder) and require.attr['id'] != self.id:
-				return False
-			return True
-		if self.id != require.id:
+		if not isinstance(require, AssetPlaceholder):
+			return self == require
+		if 'id' in require.attr and not isinstance(require.attr['id'], base.TransformPlaceholder) and require.attr['id'] != self.id:
 			return False
 		return True
 
@@ -370,12 +366,12 @@ class TivoServerVideoDiscoveryTransform(Transform):
 		return self.SPEC
 	def newTask(self,env,input,output):
 		if input is None:
-			raise ArgumentError('inappropriate input arguments')
+			raise TaskLaunchError('inappropriate input arguments')
 		tivo = input[0]
 		return TivoServerVideoDiscovery(self, tivo, env)
 	def isRunning(self,tasks,input,output):
 		if input is None:
-			raise ArgumentError('inappropriate input arguments')
+			raise TaskLaunchError('inappropriate input arguments')
 		tivo = input[0]
 		for taskID in tasks:
 			task = tasks[taskID]
@@ -401,35 +397,33 @@ class TivoServerVideoDiscovery(ThreadTask):
 		addr = self.tivo.tivoAddr()
 		if addr is not None:
 			videoList = TivoServerQuery(self.tivo.mediaKey).getVideoList(addr)
-			assets = env.getAssetsByType('TivoVideo')
+			videos = env.getAssetsByType('TivoVideo')
 			
-			# check for updated assets
-			if assets is not None:
-				for assetKey in assets.keys():
-					asset = assets[assetKey]
-					splitKey = asset.ident().split(':', 2)
-					if splitKey[0] == self.tivo.id:
-						if not (int(float.fromHex('0x' + splitKey[1])) in videoList):
-							env.undeclareAsset(asset)
-							asset.close()
+			# check for updated videos
+			newVideos = dict(videoList)
+			if videos is not None:
+				for assetKey in videos.keys():
+					video = videos[assetKey]
+					if video.server == self.tivo:
+						if video.tivoId in newVideos:
+							del newVideos[video.tivoId]
+						else:
+							env.undeclareAsset(video)
+							video.close()
+
 			# check for added assets
-			for videoKey in videoList:
-				id = "%s:%s" % (self.tivo.id, hex(videoKey)[2:])
-				if assets is None or not(id in assets):
-					newVideo = TivoVideo(id, self.tivo.id, videoList[videoKey])
-					env.declareAsset(newVideo)
+			for videoKey in newVideos:
+				newVideo = TivoVideo(videoKey, self.tivo, videoList[videoKey])
+				env.declareAsset(newVideo)
 
 ###############################################################################
 class TivoVideo(Asset):
-	def __init__(self, id, server, attr):
+	def __init__(self, tivoId, server, attr):
 		Asset.__init__(self, 'TivoVideo')
 		self.details = attr['Details']
 		self.links = attr['Links']
-		self.id = id
+		self.tivoId = tivoId
 		self.server = server
-
-	def ident(self):
-		return self.id
 
 	def dispFilesize(self, size):
 		if size == 1:
@@ -466,13 +460,22 @@ class TivoVideo(Asset):
 
 	def name(self):
 		title = self.details['Title']
-		if 'EpisodeNumber' in self.details:
-			title = title + ' [' + str(self.details['EpisodeNumber']) + ']'
+		if 'ProgramId' in self.details:
+			title = '[%s] %s' % (self.details['ProgramId'], title)
 		if 'EpisodeTitle' in self.details:
-			title = title + ' - ' + self.details['EpisodeTitle']
+			title = '%s - %s' % (title, self.details['EpisodeTitle'])
 		if 'SourceSize' in self.details:
-			title = title + ' (' + self.dispFilesize(self.details['SourceSize']) + ')'
+			title = '%s (%s)' % (title, self.dispFilesize(self.details['SourceSize']))
 		return title
+
+	def satisfies(self, require):
+		if self.type != require.type:
+			return False
+		if not isinstance(require, AssetPlaceholder):
+			return self == require
+		if 'id' in require.attr and not isinstance(require.attr['server'], base.TransformPlaceholder) and require.attr['server'] != self.server.id:
+			return False
+		return True
 
 ###############################################################################
 class DownloadTivoVideo(Transform):
@@ -493,9 +496,9 @@ class DownloadTivoVideo(Transform):
 
 	def newTask(self,env,input,output):
 		if input is not None:
-			raise ArgumentError('inappropriate input arguments')
+			raise TaskLaunchError('inappropriate input arguments')
 		if output is not None:
-			raise ArgumentError('inappropriate output arguments')
+			raise TaskLaunchError('inappropriate output arguments')
 		server = input[0]
 		infile = input[1]
 		outfile = output[0]
@@ -527,9 +530,9 @@ class DecryptTivoVideoDSD(base.ToolchainTransform):
 		
 	def newTask(self,env,input,output):
 		if input is not None:
-			raise ArgumentError('inappropriate input arguments')
+			raise TaskLaunchError('inappropriate input arguments')
 		if output is not None:
-			raise ArgumentError('inappropriate output arguments')
+			raise TaskLaunchError('inappropriate output arguments')
 		infile = input[0]
 		outfile = output[0]
 		self.callTool(self.toolPath + ' -s "%s" -t "%s"' % (infile.filePath, outfile.filePath))
@@ -550,9 +553,9 @@ class DecryptTivoVideoTD(base.ToolchainTransform):
 		
 	def newTask(self,env,input,output):
 		if input is not None:
-			raise ArgumentError('inappropriate input arguments')
+			raise TaskLaunchError('inappropriate input arguments')
 		if output is not None:
-			raise ArgumentError('inappropriate output arguments')
+			raise TaskLaunchError('inappropriate output arguments')
 		infile = input[0]
 		outfile = output[0]
 		self.callTool(self.toolPath + ' --mak "%s" --out "%s" "%s"' % (infile.mediaKey, outfile.filePath, infile.filePath))
@@ -582,19 +585,6 @@ if __name__ == '__main__':
 	tasks = task.TaskController(env)
 	tasks.addTask(task.GoalTask(env, goal))
 
-#	chain = goal.findChain()
-#
-#	availChain = set()
-#	nextStep = set()
-#	for element in chain:
-#		if not goal.getUnresolvedDependancies(element, env):
-#			availChain.add(element)
-#			nextStep.add(element.transforms[0])
-#
-#	print str(len(nextStep)) + " steps(s) identified from " + str(len(availChain)) + " available paths(s)"
-#	for step in nextStep:
-#		tasks.addTask(step.task(env,None,None))
-		
 	try:
 		while True:
 			tasks.handleMessages(True, 30)
@@ -602,8 +592,6 @@ if __name__ == '__main__':
 			for assetType in env.assetsByType:
 				for key in env.assetsByType[assetType]:
 					print env.assetsByType[assetType][key]
-	#				if assetType == 'TivoVideo':
-	#					print env.assetsByType[assetType][key].details
 	finally:
 		print "Requesting shutdown..."
 		tasks.stop()

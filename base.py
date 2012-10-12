@@ -4,8 +4,6 @@ class Asset(object):
 	def __init__(self, type):
 		self.type = type
 		self.attr = {}
-	def ident(self):
-		pass
 	def name(self):
 		pass
 	def close(self):
@@ -320,8 +318,6 @@ class Tool(Asset):
 	def __init__(self, attr):
 		Asset.__init__(self, 'Tool')
 		self.attr = attr
-	def ident(self):
-		return self.attr['name']
 	def name(self):
 		return self.attr['name']
 	def __getattr__(self, name):
@@ -334,13 +330,13 @@ class Environment(object):
 	def declareAsset(self, obj):
 		if not(obj.type in self.assetsByType):
 			self.assetsByType[obj.type] = {}
-		ident = obj.ident()
+		ident = id(obj)
 		if not (ident in self.assetsByType[obj.type]):
 			self.assetsByType[obj.type][ident] = obj
 
 	def undeclareAsset(self, obj):
 		if obj.type in self.assetsByType:
-			ident = obj.ident()
+			ident = id(obj)
 			if ident in self.assetsByType[obj.type]:
 				del self.assetsByType[obj.type][ident]
 
