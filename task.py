@@ -93,6 +93,8 @@ class Task(object):
 		pass
 	def name(self):
 		return "Generic Task"
+	def transform(self):
+		return None
 	def __repr__(self):
 		return "<Task: %s>" % self.name()
 	def statusChanged(self, newStatus):
@@ -143,6 +145,7 @@ class TaskController(object):
 		self.messages = MessageQueue()
 		self.observers = Observable()
 		self.tasks = {}
+		self.xforms = {}
 		if env is not None:
 			self.observeEnvironment(env)
 	def __notify(self, task, msg):
@@ -153,7 +156,29 @@ class TaskController(object):
 			raise RuntimeError('Task is already a member of this controller');
 		task.addObserver(self.__notify)
 		self.tasks[taskId] = task
+		xform = task.transform()
+		if xform is not None:
+			xformID = id(xform)
+			if not(xformID in self.xforms):
+				self.xforms[xformID] = {}
+			self.xforms[xformID][taskId] = task
 		task.start(self)
+	def removeTask(self, task):
+		taskId = id(task)
+		if taskId in self.tasks:
+			task.removeObserver(self.__notify)
+			task.stop(self)
+			del self.tasks[taskId]
+			xform = task.transform()
+			if xform is not None:
+				xformID = id(xform)
+				if xformID in self.xforms and taskId in self.xforms[xformID]:
+					del self.xforms[xformID][taskId]
+	def tasksByTransform(self, xform):
+		xformID = id(xform)
+		if xformID in self.xforms:
+			return self.xforms[xformID]
+		return None
 	def addObserver(self, obj):
 		self.observers.add(obj)
 	def removeObserver(self, obj):
@@ -328,13 +353,10 @@ class GoalTask(Task):
 				availChain.add(element)
 				nextStep.add(element.transforms[0])
 
-		#for element in availChain:
-		#	print "element: " + repr(element)
-
 		print "%d steps(s) identified from %d available path(s)" % (len(nextStep), len(availChain))
 		for step in nextStep:
-			#print "step: " + repr(step)
 			instances = self.goal.resolveSpecDependancies(step.spec(), self.env)
-			print "big mess: " + repr(instances)
+			runningTasks = self.tasks.tasksByTransform(step)
 			for instance in instances:
-				self.tasks.addTask(step.task(self.env,instance,None))
+				if runningTasks is None or not step.isRunning(runningTasks,instance,None):
+					self.tasks.addTask(step.newTask(self.env,instance,None))

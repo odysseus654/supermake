@@ -22,10 +22,10 @@ class Transform(object):
 		pass
 	def spec(self):
 		pass
-	def task(self,env,input,output):
+	def newTask(self,env,input,output):
 		pass
-	def newTask(self, task):
-		return task
+	def isRunning(self,tasks,input,output):
+		return False
 		
 class TransformSpec(object):
 	def __init__(self, attr = {}):

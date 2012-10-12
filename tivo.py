@@ -12,8 +12,12 @@ class TivoServerListenerTransform(Transform):
 		Transform.__init__(self)
 	def spec(self):
 		return self.SPEC
-	def task(self,env,input,output):
-		return self.newTask(TivoServerListenerTask(env))
+	def newTask(self,env,input,output):
+		return TivoServerListenerTask(self,env)
+	def isRunning(self,tasks,input,output):
+		for task in tasks:
+			return True
+		return False
 	
 class TivoServerListenerTask(ThreadTask):
 	SOCKET_PORT    = 2190
@@ -21,8 +25,9 @@ class TivoServerListenerTask(ThreadTask):
 	SERVER_EXPIRE  = 300
 	SOCKET_TIMEOUT = 10
 
-	def __init__(self, env):
+	def __init__(self, xform, env):
 		ThreadTask.__init__(self)
+		self.xform = xform
 		self.tivoStatus = {}					# no lock necessary as it's only ever looked at by the worker thread
 		self.env = env
 	
@@ -30,6 +35,8 @@ class TivoServerListenerTask(ThreadTask):
 		return "Tivo Broadcast Listener"
 	def stop(self):
 		self.threadStatus = ThreadTask.thrCANCELLING
+	def transform(self):
+		return self.xform
 		
 	def serverSeen(self, id, attrs):
 		if id in self.tivoStatus:
@@ -361,22 +368,34 @@ class TivoServerVideoDiscoveryTransform(Transform):
 		Transform.__init__(self)
 	def spec(self):
 		return self.SPEC
-	def task(self,env,input,output):
+	def newTask(self,env,input,output):
 		if input is None:
 			raise ArgumentError('inappropriate input arguments')
 		tivo = input[0]
-		return self.newTask(TivoServerVideoDiscovery(tivo, env))
+		return TivoServerVideoDiscovery(self, tivo, env)
+	def isRunning(self,tasks,input,output):
+		if input is None:
+			raise ArgumentError('inappropriate input arguments')
+		tivo = input[0]
+		for taskID in tasks:
+			task = tasks[taskID]
+			if task.tivo == tivo:
+				return True
+		return False
 
 class TivoServerVideoDiscovery(ThreadTask):
-	def __init__(self, tivo, env):
+	def __init__(self, xform, tivo, env):
 		ThreadTask.__init__(self)
+		self.xform = xform
 		self.tivo = tivo
 		self.env = env
 	
 	def name(self):
-		return "Tivo Video Discovery"
+		return "Tivo Video Discovery %s" % self.tivo
 	def stop(self):
 		self.threadStatus = ThreadTask.thrCANCELLING
+	def transform(self):
+		return self.xform
 		
 	def run(self):
 		addr = self.tivo.tivoAddr()
@@ -472,7 +491,7 @@ class DownloadTivoVideo(Transform):
 		query = TivoServerQuery(mediaKey)
 		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
 
-	def task(self,env,input,output):
+	def newTask(self,env,input,output):
 		if input is not None:
 			raise ArgumentError('inappropriate input arguments')
 		if output is not None:
@@ -506,7 +525,7 @@ class DecryptTivoVideoDSD(base.ToolchainTransform):
 	def spec(self):
 		return self.SPEC
 		
-	def task(self,env,input,output):
+	def newTask(self,env,input,output):
 		if input is not None:
 			raise ArgumentError('inappropriate input arguments')
 		if output is not None:
@@ -529,7 +548,7 @@ class DecryptTivoVideoTD(base.ToolchainTransform):
 	def spec(self):
 		return self.SPEC
 		
-	def task(self,env,input,output):
+	def newTask(self,env,input,output):
 		if input is not None:
 			raise ArgumentError('inappropriate input arguments')
 		if output is not None:
