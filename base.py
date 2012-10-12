@@ -75,7 +75,7 @@ class TransformSpec(object):
 		if self.produces is None:
 			return None
 		for val in self.produces:
-			if asset.satisfiedBy(val):
+			if asset.type == val.type and val.satisfies(asset):
 				return val
 		return None
 	def joinableAsChild(self, child):
@@ -283,13 +283,13 @@ class AssetPlaceholder(Asset):
 		for attr in self.attr:
 			hashResult = hashResult ^ hash(attr)
 		return hashResult
-	def satisfiedBy(self, target):
-		if target.type != self.type:
+	def satisfies(self, require):
+		if self.type != require.type:
 			return False
-		for attr in self.attr:
-			if attr not in target.attr:
+		for attr in require.attr:
+			if attr not in self.attr:
 				return False
-			if not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(target.attr[attr], TransformPlaceholder) and self.attr[attr] != target.attr[attr]:
+			if not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(require.attr[attr], TransformPlaceholder) and require.attr[attr] != self.attr[attr]:
 				return False
 		return True
 	def instantiatePlaceholder(self, replList):

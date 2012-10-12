@@ -342,6 +342,17 @@ class TivoServer(Asset):
 				addr['port'] = service['port']
 			return addr
 
+	def satisfies(self, require):
+		if self.type != require.type:
+			return False
+		if isinstance(require, AssetPlaceholder):
+			if 'id' in require.attr and not isinstance(require.attr['id'], base.TransformPlaceholder) and require.attr['id'] != self.id:
+				return False
+			return True
+		if self.id != require.id:
+			return False
+		return True
+
 class TivoServerVideoDiscoveryTransform(Transform):
 	SPEC = base.TransformSpec()
 	SPEC.requires = [AssetPlaceholder('TivoServer', {'id': base.TransformPlaceholder(), 'mediaKey': base.TransformPlaceholder() })]

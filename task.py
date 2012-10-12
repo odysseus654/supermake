@@ -191,10 +191,11 @@ class Goal(object):
 		assets = env.getAssetsByType(phAsset.type)
 		if assets is None:
 			return None
-		print "isDependencyResolved: %s" % phAsset
+		#print "isDependencyResolved: %s" % phAsset
 		for assetKey in assets.keys():
 			foundAsset = assets[assetKey]
-			if phAsset.satisfiedBy(foundAsset):
+			#print "-->looking at %s" % foundAsset
+			if phAsset.type == foundAsset.type and foundAsset.satisfies(phAsset):
 				return foundAsset
 
 	def resolveDependancy(self, phAsset, env):
@@ -205,16 +206,16 @@ class Goal(object):
 		results = []
 		for assetKey in assets.keys():
 			foundAsset = assets[assetKey]
-			if phAsset.satisfiedBy(foundAsset):
-				results.add(foundAsset)
+			if phAsset.type == foundAsset.type and foundAsset.satisfies(phAsset):
+				results.append(foundAsset)
 		return results
 
 	# what steps can we do to get to an asset with the specified pattern?
 	def findChain(self, env = None):
-		if env is not None:
-			localAsset = self.isDependancyResolved(self.placeholder, env)
-			if localAsset is not None:
-				return set([localAsset])
+	#	if env is not None:
+	#		localAsset = self.isDependancyResolved(self.placeholder, env)
+	#		if localAsset is not None:
+	#			return set([localAsset])
 
 		specs = set()
 		chains = self.transformSearch(self.placeholder)
@@ -266,8 +267,8 @@ class Goal(object):
 		for itemList in input:
 			for availItem in avail:
 				newItem = list(itemList)
-				newItem.add(availItem)
-				newInput.add(tuple(newItem))
+				newItem.append(availItem)
+				newInput.append(tuple(newItem))
 		return newInput
 
 	def transformSearch(self, phAsset):
