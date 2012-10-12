@@ -19,7 +19,7 @@ class TivoServerListenerTask(ThreadTask):
 	SOCKET_PORT    = 2190
 	SERVER_STALE   = 120
 	SERVER_EXPIRE  = 300
-	SOCKET_TIMEOUT = 60
+	SOCKET_TIMEOUT = 10
 
 	def __init__(self, env):
 		ThreadTask.__init__(self)
@@ -321,7 +321,6 @@ class TivoServer(Asset):
 	def resetAttrs(self, attr):
 		self.attr = attr
 		self.id = attr['identity']
-		self.mediaKey = "4714995599"
 
 	def ident(self):
 		return self.id

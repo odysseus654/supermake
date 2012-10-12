@@ -218,7 +218,7 @@ class Goal(object):
 	#			return set([localAsset])
 
 		specs = set()
-		chains = self.transformSearch(self.placeholder)
+		chains = self.__transformSearch(self.placeholder)
 		while chains:
 			for element in chains:
 				#print "deps came back for " + str(element)
@@ -228,7 +228,32 @@ class Goal(object):
 						specs.add(element)
 				else:
 					specs.add(element)
-			chains = self.transformExtend(chains, env)
+			# given a list of specs, attempt to find other transforms to add onto it to extend the possible chain
+			extendedSpecs = set()
+			for spec in chains:
+				#print "trying to extend " + str(spec)
+				deps = self.getUnresolvedSpecDependancies(spec, env)
+				for dep in deps:
+					theseSpecs = self.__transformSearch(dep)
+					for thisSpec in theseSpecs:
+						if thisSpec.joinableAsChild(spec):
+							#print "COMBINE " + str(thisSpec) + " + " + str(spec)
+							combinedSpec = thisSpec.combineAsChild(spec)
+							#print "COMBINE-result " + str(combinedSpec)
+							extendedSpecs.add(combinedSpec)
+			chains = extendedSpecs
+		return specs
+
+	def __transformSearch(self, phAsset):
+		#global avail_transforms		not necessary as we're only reading?
+		specs = set()
+		for transform in avail_transforms:
+			spec = transform.spec()
+			assert(spec is not None)
+			if spec.canProduce(phAsset):
+				if spec.transforms is None:
+					spec.transforms = tuple([ transform ])
+				specs.add(spec)
 		return specs
 
 	# what requirements does the spec have that are not satisfied by the env (if specified) ?
@@ -271,34 +296,6 @@ class Goal(object):
 				newInput.append(tuple(newItem))
 		return newInput
 
-	def transformSearch(self, phAsset):
-		#global avail_transforms		not necessary as we're only reading?
-		specs = set()
-		for transform in avail_transforms:
-			spec = transform.spec()
-			assert(spec is not None)
-			if spec.canProduce(phAsset):
-				if spec.transforms is None:
-					spec.transforms = tuple([ transform ])
-				specs.add(spec)
-		return specs
-		
-	# given a list of specs, attempt to find other transforms to add onto it to extend the possible chain
-	def transformExtend(self, specs, env = None):
-		extendedSpecs = set()
-		for spec in specs:
-			#print "trying to extend " + str(spec)
-			deps = self.getUnresolvedSpecDependancies(spec, env)
-			for dep in deps:
-				theseSpecs = self.transformSearch(dep)
-				for thisSpec in theseSpecs:
-					if thisSpec.joinableAsChild(spec):
-						#print "COMBINE " + str(thisSpec) + " + " + str(spec)
-						combinedSpec = thisSpec.combineAsChild(spec)
-						#print "COMBINE-result " + str(combinedSpec)
-						extendedSpecs.add(combinedSpec)
-		return extendedSpecs
-
 	def __repr__(self):
 		return "<Goal: %s>" % repr(self.placeholder)
 
@@ -308,6 +305,7 @@ class GoalTask(Task):
 		self.env = env
 		self.goal = goal
 		self.findAll = findAll
+		self.library = self.goal.findChain()
 	def start(self, tasks):
 		self.statusChanged(Task.tsRUNNING)
 		self.tasks = tasks
@@ -323,17 +321,19 @@ class GoalTask(Task):
 		if (msg.type == Notification.ntNEWASSET) or (msg.type == Notification.ntDEADASSET):
 			self.evaluate()
 	def evaluate(self):
-		chain = self.goal.findChain(self.env)
 		availChain = set()
 		nextStep = set()
-		for element in chain:
-			print "element: " + repr(element)
+		for element in self.library:
 			if not self.goal.getUnresolvedSpecDependancies(element, self.env):
 				availChain.add(element)
 				nextStep.add(element.transforms[0])
 
+		#for element in availChain:
+		#	print "element: " + repr(element)
+
 		print "%d steps(s) identified from %d available path(s)" % (len(nextStep), len(availChain))
 		for step in nextStep:
+			#print "step: " + repr(step)
 			instances = self.goal.resolveSpecDependancies(step.spec(), self.env)
 			print "big mess: " + repr(instances)
 			for instance in instances:
