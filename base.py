@@ -284,6 +284,8 @@ class AssetPlaceholder(Asset):
 	def satisfies(self, require):
 		if self.type != require.type:
 			return False
+		if isinstance(require, RelaxedAssetPlaceholder):
+			return require.satisfies(self)
 		for attr in require.attr:
 			if attr not in self.attr:
 				return False
@@ -303,6 +305,15 @@ class AssetPlaceholder(Asset):
 		for attr in other.attr:
 			if attr not in self.attr:
 				self.attr[attr] = other.attr[attr]
+
+class RelaxedAssetPlaceholder(AssetPlaceholder):
+	def satisfies(self, require):
+		if self.type != require.type:
+			return False
+		for attr in require.attr:
+			if attr in self.attr and not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(require.attr[attr], TransformPlaceholder) and require.attr[attr] != self.attr[attr]:
+				return False
+		return True
 
 class TransformPlaceholder(object):
 	def __repr__(self):

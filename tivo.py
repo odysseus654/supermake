@@ -457,11 +457,27 @@ class TivoVideo(Asset):
 		if size < 100:
 			return str(int(size*10)/10.0) + ' TB'
 		return str(int(size)) + ' TB'
+		
+	def programId(self):
+		id = self.details['ProgramId']
+		show = ('00' + id[2:-4])[-8:]
+		episode = id[-4:]
+		if episode == '0000':
+			return self.showId()
+		return '%s%s%s' % (id[:2], show, episode)
+
+	def showId(self):
+		id = self.details['ProgramId']
+		show = ('00' + id[2:-4])[-8:]
+		eptype = id[:2]
+		if eptype == 'EP':
+			eptype = 'SH'
+		return '%s%s' % (eptype, show)
 
 	def name(self):
 		title = self.details['Title']
 		if 'ProgramId' in self.details:
-			title = '[%s] %s' % (self.details['ProgramId'], title)
+			title = '[%s] %s' % (self.programId(), title)
 		if 'EpisodeTitle' in self.details:
 			title = '%s - %s' % (title, self.details['EpisodeTitle'])
 		if 'SourceSize' in self.details:
@@ -474,6 +490,12 @@ class TivoVideo(Asset):
 		if not isinstance(require, AssetPlaceholder):
 			return self == require
 		if 'id' in require.attr and not isinstance(require.attr['server'], base.TransformPlaceholder) and require.attr['server'] != self.server.id:
+			return False
+		if 'showid' in require.attr and not isinstance(require.attr['showid'], base.TransformPlaceholder) and require.attr['showid'] != self.showId():
+			return False
+		if 'programid' in require.attr and not isinstance(require.attr['programid'], base.TransformPlaceholder) and require.attr['programid'] != self.programId():
+			return False
+		if 'title' in require.attr and not isinstance(require.attr['title'], base.TransformPlaceholder) and require.attr['title'].lower() != self.details['Title'].lower():
 			return False
 		return True
 
@@ -489,10 +511,6 @@ class DownloadTivoVideo(Transform):
 	
 	def spec(self):
 		return self.SPEC
-
-	def fetchFile(self, mediaKey, infile, outfile):
-		query = TivoServerQuery(mediaKey)
-		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
 
 	def newTask(self,env,input,output):
 		if input is not None:
@@ -516,6 +534,35 @@ class DownloadTivoVideo(Transform):
 		for attr in tempAttr:
 			outfile.details[attr] = tempAttr[attr]
 		outfile.mediaKey = mediaKey
+
+		file = open(outfile.filename, 'wb')
+		query = TivoServerQuery(mediaKey)
+		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
+		return FileCopyTask(outfile, req, file)
+
+class FileCopyTask(ThreadTask):
+	def __init__(self, asset, src, dest):
+		ThreadTask.__init__(self)
+		self.asset = asset
+		self.src = src
+		self.dest = dest
+		self.block = 1024*1024
+	
+	def name(self):
+		return "Stream Copy Task: %s" % self.asset
+	def stop(self):
+		self.threadStatus = ThreadTask.thrCANCELLING
+		
+	def run(self):
+		try:
+			while self.threadStatus == ThreadTask.thrRUNNING:
+				buf = self.src.read(self.block)
+				if not buf:
+					break
+				self.dest.write(buf)
+		finally:
+			self.src.close()
+			self.dest.close()
 
 ###############################################################################
 
@@ -581,7 +628,9 @@ task.avail_transforms.add(DecryptTivoVideoTD())
 ###############################################################################
 if __name__ == '__main__':
 	env = task.ObservableEnvironment()
-	goal = task.Goal(base.AssetPlaceholder('MpegVideo'))
+	goalAsset = base.RelaxedAssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
+	matchAsset = base.RelaxedAssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
+	goal = task.Goal(goalAsset)
 	tasks = task.TaskController(env)
 	tasks.addTask(task.GoalTask(env, goal))
 
@@ -589,9 +638,28 @@ if __name__ == '__main__':
 		while True:
 			tasks.handleMessages(True, 30)
 			tasks.dump()
-			for assetType in env.assetsByType:
-				for key in env.assetsByType[assetType]:
-					print env.assetsByType[assetType][key]
+			
+			if 'TivoVideo' in env.assetsByType:
+				videos = env.assetsByType['TivoVideo']
+				#shows = {}
+				for video in sorted(videos.itervalues(), key=TivoVideo.programId):
+					#video = videos[key]
+					if video.satisfies(matchAsset):
+						print video
+#					title = video.details['Title']
+#					showID = video.showId()
+#					if not showID in shows:
+#						shows[showID] = title
+#				for showID in shows:
+#					if showID[:2] == 'SH':
+#						print '%s: %s' % (showID, shows[showID])
+#				for showID in shows:
+#					if showID[:2] != 'SH':
+#						print '%s: %s' % (showID, shows[showID])
+				
+#			for assetType in env.assetsByType:
+#				for key in env.assetsByType[assetType]:
+#					print env.assetsByType[assetType][key]
 	finally:
 		print "Requesting shutdown..."
 		tasks.stop()
