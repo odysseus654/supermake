@@ -224,9 +224,9 @@ class TivoServerQuery(object):
 
 	def openXmlPath(self, addr):
 		addr = dict(addr) # make local copy
-		if not('path' in addr):
+		if 'path' not in addr:
 			addr['path'] = '/TiVoConnect'
-		if not('args' in addr):
+		if 'args' not in addr:
 			addr['args'] = {}
 		addr['args']['Command'] = 'QueryContainer'
 		addr['args']['ItemCount'] = self.REQUEST_SIZE

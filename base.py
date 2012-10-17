@@ -61,14 +61,6 @@ class TransformSpec(object):
 	def __hash__(self):
 		return hash(self.transforms)
 
-	def copy(self):
-		copy = TransformSpec()
-		copy.requires = self.requires
-		copy.consumes = self.consumes
-		copy.locks = self.locks
-		copy.produces = self.produces
-		copy.transforms = self.transforms
-		return copy
 	def canProduce(self, asset):
 		if self.produces is None:
 			return None
@@ -112,8 +104,8 @@ class TransformSpec(object):
 
 	def combineAsChild(self, child):
 		# this does a number on both us and the child, so make copies of both first
-		tempParent = self.copy()
-		tempChild = child.copy()
+		tempParent = copy.copy(self)
+		tempChild = copy.copy(child)
 		newSpec = TransformSpec()
 
 		# the link is what the parent produces, so link the two together
@@ -344,7 +336,7 @@ class Environment(object):
 		self.assetsByType = {}
 		
 	def declareAsset(self, obj):
-		if not(obj.type in self.assetsByType):
+		if obj.type not in self.assetsByType:
 			self.assetsByType[obj.type] = set()
 		if obj not in self.assetsByType[obj.type]:
 			self.assetsByType[obj.type].add(obj)

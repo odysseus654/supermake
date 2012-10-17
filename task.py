@@ -65,7 +65,7 @@ class ObservableEnvironment(Environment):
 		self.observers.remove(obj)
 		
 	def declareAsset(self, obj):
-		isNew = not(obj.type in self.assetsByType) or not (obj in self.assetsByType[obj.type])
+		isNew = (obj.type not in self.assetsByType) or (obj not in self.assetsByType[obj.type])
 		Environment.declareAsset(self, obj)
 		if isNew:
 			self.observers.notifyObservers(Notification(self, Notification.ntNEWASSET, obj))
@@ -158,7 +158,7 @@ class TaskController(object):
 		self.tasks.add(task)
 		xform = task.transform()
 		if xform is not None:
-			if not(xform in self.xforms):
+			if xform not in self.xforms:
 				self.xforms[xform] = set()
 			self.xforms[xform].add(task)
 		task.start(self)
