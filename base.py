@@ -76,6 +76,13 @@ class TransformSpec(object):
 			if asset.type == val.type and val.satisfies(asset):
 				return val
 		return None
+	def canWeaklyProduce(self, asset):
+		if self.produces is None:
+			return None
+		for val in self.produces:
+			if asset.type == val.type and asset.weaklySatisfiedBy(val):
+				return val
+		return None
 	def joinableAsChild(self, child):
 		if self.produces is None:
 			return False
@@ -284,12 +291,19 @@ class AssetPlaceholder(Asset):
 	def satisfies(self, require):
 		if self.type != require.type:
 			return False
-		if isinstance(require, RelaxedAssetPlaceholder):
-			return require.satisfies(self)
 		for attr in require.attr:
 			if attr not in self.attr:
 				return False
 			if not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(require.attr[attr], TransformPlaceholder) and require.attr[attr] != self.attr[attr]:
+				return False
+		return True
+	def weaklySatisfiedBy(self, target):
+		if self.type != target.type:
+			return False
+		if not isinstance(target, AssetPlaceholder):
+			return target.satisfies(self)
+		for attr in self.attr:
+			if attr in target.attr and not isinstance(target.attr[attr], TransformPlaceholder) and not isinstance(self.attr[attr], TransformPlaceholder) and self.attr[attr] != target.attr[attr]:
 				return False
 		return True
 	def instantiatePlaceholder(self, replList):
@@ -305,15 +319,6 @@ class AssetPlaceholder(Asset):
 		for attr in other.attr:
 			if attr not in self.attr:
 				self.attr[attr] = other.attr[attr]
-
-class RelaxedAssetPlaceholder(AssetPlaceholder):
-	def satisfies(self, require):
-		if self.type != require.type:
-			return False
-		for attr in require.attr:
-			if attr in self.attr and not isinstance(self.attr[attr], TransformPlaceholder) and not isinstance(require.attr[attr], TransformPlaceholder) and require.attr[attr] != self.attr[attr]:
-				return False
-		return True
 
 class TransformPlaceholder(object):
 	def __repr__(self):
@@ -340,16 +345,13 @@ class Environment(object):
 		
 	def declareAsset(self, obj):
 		if not(obj.type in self.assetsByType):
-			self.assetsByType[obj.type] = {}
-		ident = id(obj)
-		if not (ident in self.assetsByType[obj.type]):
-			self.assetsByType[obj.type][ident] = obj
+			self.assetsByType[obj.type] = set()
+		if obj not in self.assetsByType[obj.type]:
+			self.assetsByType[obj.type].add(obj)
 
 	def undeclareAsset(self, obj):
-		if obj.type in self.assetsByType:
-			ident = id(obj)
-			if ident in self.assetsByType[obj.type]:
-				del self.assetsByType[obj.type][ident]
+		if obj.type in self.assetsByType and obj in self.assetsByType[obj.type]:
+			self.assetsByType[obj.type].remove(obj)
 
 	def getAssetsByType(self, type):
 		if type in self.assetsByType:

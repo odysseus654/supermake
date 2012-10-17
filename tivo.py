@@ -1,4 +1,4 @@
-import socket, traceback, time, thread, urllib2, urllib, urlparse, sys, xml.sax
+import socket, traceback, time, thread, urllib2, urllib, urlparse, sys, xml.sax, cookielib
 import base, task
 from base import Asset, Transform, AssetPlaceholder
 from task import ThreadTask, TaskLaunchError
@@ -193,8 +193,10 @@ class TivoServerQuery(object):
 
 	def initOpener(self, addr):
 		auth = urllib2.HTTPDigestAuthHandler()
+		cookies = urllib2.HTTPCookieProcessor(cookielib.CookieJar())
 		auth.add_password('TiVo DVR', addr, 'tivo', self.mediaKey)
-		self.opener = urllib2.build_opener(auth)
+		handlers = [auth, cookies]
+		self.opener = urllib2.build_opener(*handlers)
 
 	def crackUrl(self, url):
 		parsed = urlparse.urlparse(url)
@@ -402,8 +404,7 @@ class TivoServerVideoDiscovery(ThreadTask):
 			# check for updated videos
 			newVideos = dict(videoList)
 			if videos is not None:
-				for assetKey in videos.keys():
-					video = videos[assetKey]
+				for video in videos:
 					if video.server == self.tivo:
 						if video.tivoId in newVideos:
 							del newVideos[video.tivoId]
@@ -513,15 +514,14 @@ class DownloadTivoVideo(Transform):
 		return self.SPEC
 
 	def newTask(self,env,input,output):
-		if input is not None:
+		if input is None:
 			raise TaskLaunchError('inappropriate input arguments')
-		if output is not None:
+		if output is None:
 			raise TaskLaunchError('inappropriate output arguments')
-		server = input[0]
-		infile = input[1]
+		infile = input[0]
 		outfile = output[0]
-		mediaKey = server.mediaKey
-		self.fetchFile(mediaKey, infile, outfile)
+		mediaKey = infile.server.mediaKey
+		#self.fetchFile(mediaKey, infile, outfile)
 		tempAttr = dict(infile.details)
 		if 'ContentType' in tempAttr:
 			del tempAttr['ContentType']
@@ -535,9 +535,9 @@ class DownloadTivoVideo(Transform):
 			outfile.details[attr] = tempAttr[attr]
 		outfile.mediaKey = mediaKey
 
-		file = open(outfile.filename, 'wb')
 		query = TivoServerQuery(mediaKey)
 		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
+		file = outfile.open('wb')
 		return FileCopyTask(outfile, req, file)
 
 class FileCopyTask(ThreadTask):
@@ -563,6 +563,23 @@ class FileCopyTask(ThreadTask):
 		finally:
 			self.src.close()
 			self.dest.close()
+
+class FileAsset(Asset):
+	def __init__(self, type, filename):
+		Asset.__init__(self, type)
+		self.filename = filename
+		
+	def name(self):
+		return self.filename
+		
+	def open(self, mode):
+		return open(self.filename, mode)
+
+class TivoVideoDownload(FileAsset):
+	def __init__(self, filename, mediaKey):
+		FileAsset.__init__(self, 'TivoVideo', filename)
+		self.details = {}
+		self.mediaKey = mediaKey
 
 ###############################################################################
 
@@ -628,24 +645,26 @@ task.avail_transforms.add(DecryptTivoVideoTD())
 ###############################################################################
 if __name__ == '__main__':
 	env = task.ObservableEnvironment()
-	goalAsset = base.RelaxedAssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
-	matchAsset = base.RelaxedAssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
+	goalAsset = base.AssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
+	matchAsset = base.AssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
 	goal = task.Goal(goalAsset)
 	tasks = task.TaskController(env)
 	tasks.addTask(task.GoalTask(env, goal))
 
 	try:
 		while True:
-			tasks.handleMessages(True, 30)
+			tasks.handleMessages(True, 60)
 			tasks.dump()
 			
 			if 'TivoVideo' in env.assetsByType:
 				videos = env.assetsByType['TivoVideo']
 				#shows = {}
-				for video in sorted(videos.itervalues(), key=TivoVideo.programId):
+				for video in sorted(videos.itervalues(), key=TivoVideo.programId, reverse=True):
 					#video = videos[key]
 					if video.satisfies(matchAsset):
-						print video
+						downloadTask = DownloadTivoVideo().newTask(env,(video,),(TivoVideoDownload('c:\\stuff\\supermake\\test.tivo', video.server.id),))
+						tasks.addTask(downloadTask)
+						break
 #					title = video.details['Title']
 #					showID = video.showId()
 #					if not showID in shows:

@@ -1,4 +1,4 @@
-import threading, Queue
+import threading, Queue, base
 from base import Environment
 
 try:
@@ -65,15 +65,13 @@ class ObservableEnvironment(Environment):
 		self.observers.remove(obj)
 		
 	def declareAsset(self, obj):
-		ident = id(obj)
-		isNew = not(obj.type in self.assetsByType) or not (ident in self.assetsByType[obj.type])
+		isNew = not(obj.type in self.assetsByType) or not (obj in self.assetsByType[obj.type])
 		Environment.declareAsset(self, obj)
 		if isNew:
 			self.observers.notifyObservers(Notification(self, Notification.ntNEWASSET, obj))
 
 	def undeclareAsset(self, obj):
-		ident = id(obj)
-		isDead = (obj.type in self.assetsByType) and (ident in self.assetsByType[obj.type])
+		isDead = (obj.type in self.assetsByType) and (obj in self.assetsByType[obj.type])
 		Environment.undeclareAsset(self, obj)
 		if isDead:
 			self.observers.notifyObservers(Notification(self, Notification.ntDEADASSET, obj))
@@ -147,40 +145,35 @@ class TaskController(object):
 	def __init__(self, env = None):
 		self.messages = MessageQueue()
 		self.observers = Observable()
-		self.tasks = {}
+		self.tasks = set()
 		self.xforms = {}
 		if env is not None:
 			self.observeEnvironment(env)
 	def __notify(self, task, msg):
 		self.messages.enqueue(msg)
 	def addTask(self, task):
-		taskId = id(task)
-		if taskId in self.tasks:
+		if task in self.tasks:
 			raise RuntimeError('Task is already a member of this controller');
 		task.addObserver(self.__notify)
-		self.tasks[taskId] = task
+		self.tasks.add(task)
 		xform = task.transform()
 		if xform is not None:
-			xformID = id(xform)
-			if not(xformID in self.xforms):
-				self.xforms[xformID] = {}
-			self.xforms[xformID][taskId] = task
+			if not(xform in self.xforms):
+				self.xforms[xform] = set()
+			self.xforms[xform].add(task)
 		task.start(self)
 	def removeTask(self, task):
-		taskId = id(task)
-		if taskId in self.tasks:
+		if task in self.tasks:
 			task.removeObserver(self.__notify)
 			task.stop(self)
-			del self.tasks[taskId]
+			self.tasks.remove(task)
 			xform = task.transform()
 			if xform is not None:
-				xformID = id(xform)
-				if xformID in self.xforms and taskId in self.xforms[xformID]:
-					del self.xforms[xformID][taskId]
+				if xform in self.xforms and task in self.xforms[xform]:
+					self.xforms[xform].remove(task)
 	def tasksByTransform(self, xform):
-		xformID = id(xform)
-		if xformID in self.xforms:
-			return self.xforms[xformID]
+		if xform in self.xforms:
+			return self.xforms[xform]
 		return None
 	def addObserver(self, obj):
 		self.observers.add(obj)
@@ -198,13 +191,11 @@ class TaskController(object):
 	def dump(self):
 		print len(self.tasks), "tasks listed"
 		idx = 1
-		for taskId in self.tasks:
-			task = self.tasks[taskId]
+		for task in self.tasks:
 			print "%d: %s (%s)" % (idx, task.name(), Task.STATUS_STRING[task.status])
 			idx += 1
 	def stop(self):
-		for taskId in self.tasks:
-			task = self.tasks[taskId]
+		for task in self.tasks:
 			task.stop()
 
 ###############################################################################
@@ -220,8 +211,7 @@ class Goal(object):
 		if assets is None:
 			return None
 		#print "isDependencyResolved: %s" % phAsset
-		for assetKey in assets.keys():
-			foundAsset = assets[assetKey]
+		for foundAsset in assets:
 			#print "-->looking at %s" % foundAsset
 			if phAsset.type == foundAsset.type and foundAsset.satisfies(phAsset):
 				return foundAsset
@@ -232,8 +222,7 @@ class Goal(object):
 		if assets is None:
 			return None
 		results = []
-		for assetKey in assets.keys():
-			foundAsset = assets[assetKey]
+		for foundAsset in assets:
 			if phAsset.type == foundAsset.type and foundAsset.satisfies(phAsset):
 				results.append(foundAsset)
 		return results
@@ -246,7 +235,7 @@ class Goal(object):
 	#			return set([localAsset])
 
 		specs = set()
-		chains = self.__transformSearch(self.placeholder)
+		chains = self.__transformSearch(self.placeholder, True)
 		while chains:
 			for element in chains:
 				#print "deps came back for " + str(element)
@@ -262,7 +251,7 @@ class Goal(object):
 				#print "trying to extend " + str(spec)
 				deps = self.getUnresolvedSpecDependancies(spec, env)
 				for dep in deps:
-					theseSpecs = self.__transformSearch(dep)
+					theseSpecs = self.__transformSearch(dep, False)
 					for thisSpec in theseSpecs:
 						if thisSpec.joinableAsChild(spec):
 							#print "COMBINE " + str(thisSpec) + " + " + str(spec)
@@ -272,16 +261,21 @@ class Goal(object):
 			chains = extendedSpecs
 		return specs
 
-	def __transformSearch(self, phAsset):
+	def __transformSearch(self, phAsset, isWeak):
 		#global avail_transforms		not necessary as we're only reading?
 		specs = set()
 		for transform in avail_transforms:
 			spec = transform.spec()
 			assert(spec is not None)
-			if spec.canProduce(phAsset):
+			if (not isWeak or not isinstance(spec, base.AssetPlaceholder)) and spec.canProduce(phAsset):
 				if spec.transforms is None:
 					spec.transforms = tuple([ transform ])
 				specs.add(spec)
+			else:
+				if isWeak and spec.canWeaklyProduce(phAsset):
+					if spec.transforms is None:
+						spec.transforms = tuple([ transform ])
+					specs.add(spec)
 		return specs
 
 	# what requirements does the spec have that are not satisfied by the env (if specified) ?
@@ -334,6 +328,7 @@ class GoalTask(Task):
 		self.goal = goal
 		self.findAll = findAll
 		self.library = self.goal.findChain()
+		print "%d goals collected in library" % len(self.library)
 	def start(self, tasks):
 		self.statusChanged(Task.tsRUNNING)
 		self.tasks = tasks
