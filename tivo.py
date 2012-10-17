@@ -253,13 +253,13 @@ class TivoServerQuery(object):
 		print "retrieving: " + fullAddr
 		return self.opener.open(fullAddr)
 
-	def getVideoList(self, startAddr):
+	def getVideoList(self, startAddr, threadTask = None):
 		req = self.openXmlPath(startAddr)
 		if 'TiVoContainer' in req:
 			req = req['TiVoContainer']
 			if type(req['Item']) == type([]):
 				thisReq = req
-				while 1:
+				while threadTask is None or threadTask.threadStatus == ThreadTask.thrRUNNING:
 					if int(thisReq['ItemStart']) + int(thisReq['ItemCount']) < int(thisReq['Details']['TotalItems']):
 						newAddr = dict(startAddr)
 						newAddr['args']['AnchorOffset'] = int(thisReq['ItemStart']) + self.REQUEST_SIZE
@@ -276,18 +276,18 @@ class TivoServerQuery(object):
 						break
 			contType = req['Details']['ContentType']
 			if contType == 'x-tivo-container/tivo-server':
-				return self.handleFolderList(req)
+				return self.handleFolderList(req, threadTask)
 			elif contType == 'x-tivo-container/tivo-videos':
 				return self.handleVideoList(req)
 
-	def handleFolderList(self, req):
+	def handleFolderList(self, req, threadTask = None):
 		folders = req['Item']
 		if type(folders) != type([]):
 			folders = [folders]
 		for folder in folders:
 			contType = folder['Details']['ContentType']
 			if contType == 'x-tivo-container/tivo-videos':
-				return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']))
+				return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']), threadTask)
 
 	def tivoId(self, item):
 		if 'TiVoVideoDetails' in item['Links']:
@@ -398,7 +398,7 @@ class TivoServerVideoDiscovery(ThreadTask):
 	def run(self):
 		addr = self.tivo.tivoAddr()
 		if addr is not None:
-			videoList = TivoServerQuery(self.tivo.mediaKey).getVideoList(addr)
+			videoList = TivoServerQuery(self.tivo.mediaKey).getVideoList(addr, self)
 			videos = env.getAssetsByType('TivoVideo')
 			
 			# check for updated videos
