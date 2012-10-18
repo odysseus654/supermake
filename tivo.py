@@ -3,6 +3,39 @@ import base, task
 from base import Asset, Transform, AssetPlaceholder
 from task import ThreadTask, TaskLaunchError
 
+def formatFilesize(size):
+	if size == 1:
+		return str(size) + ' byte'
+	if size < 1000:
+		return str(size) + ' bytes'
+	size = size / 1024.0
+	if size < 10:
+		return str(int(size*100)/100.0) + 'kb'
+	if size < 100:
+		return str(int(size*10)/10.0) + 'kb'
+	if size < 1000:
+		return str(int(size)) + 'kb'
+	size = size / 1024.0
+	if size < 10:
+		return str(int(size*100)/100.0) + ' MB'
+	if size < 100:
+		return str(int(size*10)/10.0) + ' MB'
+	if size < 1000:
+		return str(int(size)) + ' MB'
+	size = size / 1024.0
+	if size < 10:
+		return str(int(size*100)/100.0) + ' GB'
+	if size < 100:
+		return str(int(size*10)/10.0) + ' GB'
+	if size < 1000:
+		return str(int(size)) + ' GB'
+	size = size / 1024.0
+	if size < 10:
+		return str(int(size*100)/100.0) + ' TB'
+	if size < 100:
+		return str(int(size*10)/10.0) + ' TB'
+	return str(int(size)) + ' TB'
+
 ###############################################################################
 class TivoServerListenerTransform(Transform):
 	SPEC = base.TransformSpec()
@@ -375,8 +408,7 @@ class TivoServerVideoDiscoveryTransform(Transform):
 		if input is None:
 			raise TaskLaunchError('inappropriate input arguments')
 		tivo = input[0]
-		for taskID in tasks:
-			task = tasks[taskID]
+		for task in tasks:
 			if task.tivo == tivo:
 				return True
 		return False
@@ -426,39 +458,6 @@ class TivoVideo(Asset):
 		self.tivoId = tivoId
 		self.server = server
 
-	def dispFilesize(self, size):
-		if size == 1:
-			return str(size) + ' byte'
-		if size < 1000:
-			return str(size) + ' bytes'
-		size = size / 1024.0
-		if size < 10:
-			return str(int(size*100)/100.0) + 'kb'
-		if size < 100:
-			return str(int(size*10)/10.0) + 'kb'
-		if size < 1000:
-			return str(int(size)) + 'kb'
-		size = size / 1024.0
-		if size < 10:
-			return str(int(size*100)/100.0) + ' MB'
-		if size < 100:
-			return str(int(size*10)/10.0) + ' MB'
-		if size < 1000:
-			return str(int(size)) + ' MB'
-		size = size / 1024.0
-		if size < 10:
-			return str(int(size*100)/100.0) + ' GB'
-		if size < 100:
-			return str(int(size*10)/10.0) + ' GB'
-		if size < 1000:
-			return str(int(size)) + ' GB'
-		size = size / 1024.0
-		if size < 10:
-			return str(int(size*100)/100.0) + ' TB'
-		if size < 100:
-			return str(int(size*10)/10.0) + ' TB'
-		return str(int(size)) + ' TB'
-		
 	def programId(self):
 		id = self.details['ProgramId']
 		show = ('00' + id[2:-4])[-8:]
@@ -482,7 +481,7 @@ class TivoVideo(Asset):
 		if 'EpisodeTitle' in self.details:
 			title = '%s - %s' % (title, self.details['EpisodeTitle'])
 		if 'SourceSize' in self.details:
-			title = '%s (%s)' % (title, self.dispFilesize(self.details['SourceSize']))
+			title = '%s (%s)' % (title, formatFilesize(self.details['SourceSize']))
 		return title
 
 	def satisfies(self, require):

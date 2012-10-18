@@ -101,34 +101,39 @@ class TransformSpec(object):
 				if self.canProduce(val) is not None:
 					return True
 		return False
-
+	
 	def combineAsChild(self, child):
 		# this does a number on both us and the child, so make copies of both first
-		tempParent = copy.copy(self)
-		tempChild = copy.copy(child)
+		tempChild = TransformSpec()
 		newSpec = TransformSpec()
-
+		
 		# the link is what the parent produces, so link the two together
 		replList = {}
-		if tempChild.requires is not None:
-			tempChild.requires = list(tempChild.requires)
-			for val in tempChild.requires:
+		if child.requires is not None:
+			tempChild.requires = set()
+			for val in child.requires:
+				val = val.copy()
+				tempChild.requires.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = tempParent.canProduce(val)
+				produces = self.canProduce(val)
 				if produces is not None:
 					val.mergeAsset(produces, replList)
-		if tempChild.consumes is not None:
-			tempChild.consumes = list(tempChild.consumes)
-			for val in tempChild.consumes:
+		if child.consumes is not None:
+			tempChild.consumes = set()
+			for val in child.consumes:
+				val = val.copy()
+				tempChild.consumes.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = tempParent.canProduce(val)
+				produces = self.canProduce(val)
 				if produces is not None:
 					val.mergeAsset(produces, replList)
-		if tempChild.locks is not None:
-			tempChild.locks = list(tempChild.locks)
-			for val in tempChild.locks:
+		if child.locks is not None:
+			tempChild.locks = set()
+			for val in child.locks:
+				val = val.copy()
+				tempChild.locks.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = tempParent.canProduce(val)
+				produces = self.canProduce(val)
 				if produces is not None:
 					val.mergeAsset(produces, replList)
 		
@@ -154,47 +159,49 @@ class TransformSpec(object):
 		#		produces		+		produces		->		produces (+del?)
 
 		# first handle parent consumption and child production
-		if tempParent.consumes is not None:
-			for val in tempParent.consumes:
+		if self.consumes is not None:
+			for val in self.consumes:
 				if newSpec.consumes is None:
-					newSpec.consumes = []
-				newSpec.consumes.append(val)
-		if tempChild.produces is not None:
-			tempChild.produces = list(tempChild.produces)
-			for val in tempChild.produces:
+					newSpec.consumes = set()
+				newSpec.consumes.add(val)
+		if child.produces is not None:
+			tempChild.produces = set()
+			for val in child.produces:
+				val = val.copy()
+				tempChild.produces.add(val)
 				val.instantiatePlaceholder(replList)
 				if newSpec.produces is None:
-					newSpec.produces = []
-				newSpec.produces.append(val)
+					newSpec.produces = set()
+				newSpec.produces.add(val)
 				
 		# now handle parent production and child consumption
-		parentProd = []
-		if tempParent.produces is not None:
-			parentProd = list(tempParent.produces)
+		parentProd = set()
+		if self.produces is not None:
+			parentProd = set(self.produces)
 		if tempChild.consumes is not None:
 			for val in tempChild.consumes:
 				val.instantiatePlaceholder(replList)
-				newProd = []
+				newProd = set()
 				foundMatch = False
 				for pVal in parentProd:
 					if val == pVal and not foundMatch:
 						foundMatch = True
 					else:
-						newProd.append(pVal)
+						newProd.add(pVal)
 				parentProd = newProd
 				if not foundMatch:
 					if newSpec.consumes is None:
-						newSpec.consumes = []
-					newSpec.consumes.append(val)
+						newSpec.consumes = set()
+					newSpec.consumes.add(val)
 		for val in parentProd:
 			if newSpec.produces is None:
-				newSpec.produces = []
-			newSpec.produces.append(val)
+				newSpec.produces = set()
+			newSpec.produces.add(val)
 			
 		# the rest is locks and requires
 		assetLocking = {}
-		if tempParent.locks is not None:
-			for val in tempParent.locks:
+		if self.locks is not None:
+			for val in self.locks:
 				if val not in assetLocking:
 					assetLocking[val] = True
 		if tempChild.locks is not None:
@@ -207,8 +214,8 @@ class TransformSpec(object):
 						break
 				if not foundMatch and val not in assetLocking:
 					assetLocking[val] = True
-		if tempParent.requires is not None:
-			for val in tempParent.requires:
+		if self.requires is not None:
+			for val in self.requires:
 				if val not in assetLocking:
 					assetLocking[val] = False
 		if tempChild.requires is not None:
@@ -224,12 +231,12 @@ class TransformSpec(object):
 		for val in assetLocking:
 			if assetLocking[val]:
 				if newSpec.locks is None:
-					newSpec.locks = []
-				newSpec.locks.append(val)
+					newSpec.locks = set()
+				newSpec.locks.add(val)
 			else:
 				if newSpec.requires is None:
-					newSpec.requires = []
-				newSpec.requires.append(val)
+					newSpec.requires = set()
+				newSpec.requires.add(val)
 
 		# now build a list of all the transforms that are contained in this
 		newSpec.transforms = []
@@ -263,7 +270,9 @@ class AssetPlaceholder(Asset):
 	def __repr__(self):
 		return '<' + self.type + ': ' + str(self.attr) + '>'
 	def __getattr__(self, name):
-		return self.attr[name]
+		if name in self.attr:
+			return self.attr[name]
+		raise AttributeError
 	def __ne__(self, other):
 		return not (self == other)
 	def __eq__(self, other):
@@ -280,6 +289,10 @@ class AssetPlaceholder(Asset):
 		for attr in self.attr:
 			hashResult = hashResult ^ hash(attr)
 		return hashResult
+	def copy(self):
+		new = AssetPlaceholder(self.type)
+		new.attr = copy.copy(self.attr)
+		return new
 	def satisfies(self, require):
 		if self.type != require.type:
 			return False
@@ -329,7 +342,9 @@ class Tool(Asset):
 	def name(self):
 		return self.attr['name']
 	def __getattr__(self, name):
-		return self.attr[name]
+		if name in self.attr:
+			return self.attr[name]
+		raise AttributeError
 	
 class Environment(object):
 	def __init__(self):
@@ -347,4 +362,5 @@ class Environment(object):
 
 	def getAssetsByType(self, type):
 		if type in self.assetsByType:
-	 		return self.assetsByType[type]
+	 		return set(self.assetsByType[type])
+		return None
