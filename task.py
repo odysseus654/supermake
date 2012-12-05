@@ -1,4 +1,4 @@
-import threading, Queue, base
+import threading, Queue, base, copy
 from base import Environment
 
 try:
@@ -17,8 +17,8 @@ class Observable(set):
 			observer(self, arg)
 
 class Notification(object):
-	ntSTATUS, ntPROGRESS, ntNEWASSET, ntDEADASSET = range(4)
-	TYPE_STRING = { ntSTATUS:'status', ntPROGRESS:'progress', ntNEWASSET:'new asset', ntDEADASSET:'dead asset' }
+	ntSTATUS, ntPROGRESS, ntNEWASSET, ntDEADASSET, ntDELAYNOTIFY = range(5)
+	TYPE_STRING = { ntSTATUS:'status', ntPROGRESS:'progress', ntNEWASSET:'new asset', ntDEADASSET:'dead asset', ntDELAYNOTIFY:'delayed notification' }
 	
 	def __init__(self, task, type, value):
 		self.task = task
@@ -149,12 +149,12 @@ class TaskController(object):
 		self.xforms = {}
 		if env is not None:
 			self.observeEnvironment(env)
-	def __notify(self, task, msg):
+	def queueNotify(self, task, msg):
 		self.messages.enqueue(msg)
 	def addTask(self, task):
 		if task in self.tasks:
 			raise RuntimeError('Task is already a member of this controller');
-		task.addObserver(self.__notify)
+		task.addObserver(self.queueNotify)
 		self.tasks.add(task)
 		xform = task.transform()
 		if xform is not None:
@@ -164,7 +164,7 @@ class TaskController(object):
 		task.start(self)
 	def removeTask(self, task):
 		if task in self.tasks:
-			task.removeObserver(self.__notify)
+			task.removeObserver(self.queueNotify)
 			task.stop(self)
 			self.tasks.remove(task)
 			xform = task.transform()
@@ -180,9 +180,9 @@ class TaskController(object):
 	def removeObserver(self, obj):
 		self.observers.remove(obj)
 	def observeEnvironment(self, env):
-		env.addObserver(self.__notify)
+		env.addObserver(self.queueNotify)
 	def unobserveEnvironment(self, env):
-		env.removeObserver(self.__notify)
+		env.removeObserver(self.queueNotify)
 	def handleMessages(self, block=False, timeout=None):
 		self.messages.handle(self.__onMessage, None, block, timeout)
 	def __onMessage(self, msg):
@@ -210,7 +210,7 @@ class Goal(object):
 		assets = env.getAssetsByType(phAsset.type)
 		if assets is None:
 			return None
-		#print "isDependencyResolved: %s" % phAsset
+		#print "isDependancyResolved: %s" % phAsset
 		for foundAsset in assets:
 			#print "-->looking at %s" % foundAsset
 			if phAsset.type == foundAsset.type and foundAsset.satisfies(phAsset):
@@ -235,7 +235,7 @@ class Goal(object):
 	#			return set([localAsset])
 
 		specs = set()
-		chains = self.__transformSearch(self.placeholder, True)
+		chains = self.__transformSearch(self.placeholder)
 		while chains:
 			for element in chains:
 				#print "deps came back for " + str(element)
@@ -251,7 +251,7 @@ class Goal(object):
 				#print "trying to extend " + str(spec)
 				deps = self.getUnresolvedSpecDependancies(spec, env)
 				for dep in deps:
-					theseSpecs = self.__transformSearch(dep, False)
+					theseSpecs = self.__transformSearch(dep)
 					for thisSpec in theseSpecs:
 						if thisSpec.joinableAsChild(spec):
 							#print "COMBINE " + str(thisSpec) + " + " + str(spec)
@@ -261,21 +261,26 @@ class Goal(object):
 			chains = extendedSpecs
 		return specs
 
-	def __transformSearch(self, phAsset, isWeak):
+	def __transformSearch(self, phAsset, isWeak = True):
 		#global avail_transforms		not necessary as we're only reading?
 		specs = set()
 		for transform in avail_transforms:
 			spec = transform.spec()
+			if spec.transforms is None:
+				spec.transforms = tuple([ transform ])
 			assert(spec is not None)
-			if (not isWeak or not isinstance(spec, base.AssetPlaceholder)) and spec.canProduce(phAsset):
-				if spec.transforms is None:
-					spec.transforms = tuple([ transform ])
+			if spec.canProduce(phAsset):
 				specs.add(spec)
-			else:
-				if isWeak and spec.canWeaklyProduce(phAsset):
-					if spec.transforms is None:
-						spec.transforms = tuple([ transform ])
-					specs.add(spec)
+			elif isWeak and isinstance(phAsset, base.AssetPlaceholder):
+				product = spec.canWeaklyProduce(phAsset)
+				if product is not None:
+					extras = phAsset.weaklySatisfiedBy(product)
+					newSpec = copy.copy(spec)
+					if newSpec.extras is None:
+						newSpec.extras = {}
+					for extraKey in extras:
+						newSpec.extras[extraKey] = extras[extraKey]
+					specs.add(newSpec)
 		return specs
 
 	# what requirements does the spec have that are not satisfied by the env (if specified) ?
@@ -283,35 +288,67 @@ class Goal(object):
 		depends = set()
 		if spec.requires is not None:
 			for val in spec.requires:
-				if env is None or not self.isDependancyResolved(val, env):
-					depends.add(val)
+				#newVal = self.combinePh(val, spec.extras)
+				newVal = val
+				if env is None or not self.isDependancyResolved(newVal, env):
+					depends.add(newVal)
 		if spec.consumes is not None:
 			for val in spec.consumes:
-				if env is None or not self.isDependancyResolved(val, env):
-					depends.add(val)
+				#newVal = self.combinePh(val, spec.extras)
+				newVal = val
+				if env is None or not self.isDependancyResolved(newVal, env):
+					depends.add(newVal)
 		if spec.locks is not None:
 			for val in spec.locks:
-				if env is None or not self.isDependancyResolved(val, env):
-					depends.add(val)
+				#newVal = self.combinePh(val, spec.extras)
+				newVal = val
+				if env is None or not self.isDependancyResolved(newVal, env):
+					depends.add(newVal)
 		return depends
 		
-	def resolveSpecDependancies(self, spec, env):
+	def combinePh(self, val, extras):
+		if not isinstance(val, base.AssetPlaceholder) or extras is None:
+			return val
+		newVal = val.copy()
+		newVal.attr.update(extras)
+		return newVal
+		
+	def resolveSpecDependancies(self, spec, env, extras):
 		input = [()]
+		specInputs = []
 		if spec.requires is not None:
 			for val in spec.requires:
-				input = self.__mixSpecDependency(input, val, env)
+				newVal = self.combinePh(val, extras)
+				input = self.__mixSpecDependency(input, specInputs, newVal, env)
+				specInputs.append(newVal)
 		if spec.consumes is not None:
 			for val in spec.consumes:
-				input = self.__mixSpecDependency(input, val, env)
+				newVal = self.combinePh(val, extras)
+				input = self.__mixSpecDependency(input, specInputs, newVal, env)
+				specInputs.append(newVal)
 		if spec.locks is not None:
 			for val in spec.locks:
-				input = self.__mixSpecDependency(input, val, env)
+				newVal = self.combinePh(val, extras)
+				input = self.__mixSpecDependency(input, specInputs, newVal, env)
+				specInputs.append(newVal)
+		#print input
 		return input
 		
-	def __mixSpecDependency(self, input, val, env):
+	def __mixSpecDependency(self, input, specInputs, val, env):
 		newInput = []
-		avail = self.resolveDependancy(val, env)
 		for itemList in input:
+			assert(len(itemList) == len(specInputs))
+			thisVal = val
+			if itemList:
+				replList = {}
+				for idx in range(len(itemList)):
+					specInput = specInputs[idx]
+					if isinstance(specInput, base.AssetPlaceholder):
+						specInput.findReplacements(itemList[idx], replList)
+				thisVal = thisVal.copy()
+				thisVal.instantiatePlaceholder(replList)
+			avail = self.resolveDependancy(thisVal, env)
+			#print "%s -> %s" % (thisVal, avail)
 			for availItem in avail:
 				newItem = list(itemList)
 				newItem.append(availItem)
@@ -328,6 +365,7 @@ class GoalTask(Task):
 		self.goal = goal
 		self.findAll = findAll
 		self.library = self.goal.findChain()
+		self.stale = False
 		print "%d goals collected in library" % len(self.library)
 	def start(self, tasks):
 		self.statusChanged(Task.tsRUNNING)
@@ -342,18 +380,25 @@ class GoalTask(Task):
 		return "Goal: " + repr(self.goal)
 	def __notify(self, task, msg):
 		if (msg.type == Notification.ntNEWASSET) or (msg.type == Notification.ntDEADASSET):
+			if not self.stale:
+				self.stale = True
+				self.tasks.queueNotify(self, Notification(self, Notification.ntDELAYNOTIFY, self))
+		elif msg.type == Notification.ntDELAYNOTIFY:
+			self.stale = False
 			self.evaluate()
 	def evaluate(self):
-		availChain = set()
+		#availChain = set()
 		nextStep = set()
 		for element in self.library:
 			if not self.goal.getUnresolvedSpecDependancies(element, self.env):
-				availChain.add(element)
-				nextStep.add(element.transforms[0])
+				#availChain.add(element)
+				nextStep.add((element.transforms[0],element.extras))
 
-		print "%d steps(s) identified from %d available path(s)" % (len(nextStep), len(availChain))
-		for step in nextStep:
-			instances = self.goal.resolveSpecDependancies(step.spec(), self.env)
+		#print "%d steps(s) identified from %d available path(s)" % (len(nextStep), len(availChain))
+		for next in nextStep:
+			step = next[0]
+			extras = next[1]
+			instances = self.goal.resolveSpecDependancies(step.spec(), self.env, extras)
 			runningTasks = self.tasks.tasksByTransform(step)
 			for instance in instances:
 				if runningTasks is None or not step.isRunning(runningTasks,instance,None):

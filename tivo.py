@@ -362,19 +362,23 @@ class TivoServer(Asset):
 		self.resetAttrs(attr)
 
 	def resetAttrs(self, attr):
-		self.attr = attr
+		self.rawattr = attr
+		self.attr = {}
 		self.id = attr['identity']
+		self.attr['id'] = self.id
+		if 'machine' in self.rawattr:
+			self.attr['name'] = self.rawattr['machine']
 
 	def name(self):
-		machine = self.id
-		if 'machine' in self.attr:
-			machine = self.attr['machine'] + " (" + self.id + ")"
-		return machine
+		name = self.id
+		if 'name' in self.attr:
+			name = self.attr['name'] + " (" + self.id + ")"
+		return name
 
 	def tivoAddr(self):
-		if ('services' in self.attr) and ('TiVoMediaServer' in self.attr['services']):
-			service = self.attr['services']['TiVoMediaServer']
-			addr = { 'proto':'http', 'host':self.attr['address'] }
+		if ('services' in self.rawattr) and ('TiVoMediaServer' in self.rawattr['services']):
+			service = self.rawattr['services']['TiVoMediaServer']
+			addr = { 'proto':'http', 'host':self.rawattr['address'] }
 			if 'proto' in service:
 				addr['proto'] = service['proto']
 			if 'port' in service:
@@ -457,8 +461,15 @@ class TivoVideo(Asset):
 		self.links = attr['Links']
 		self.tivoId = tivoId
 		self.server = server
+		self.attr['server'] = server.id
+		self.attr['showid'] = self.showId()
+		self.attr['programid'] = self.programId()
+		if 'Title' in self.details:
+			self.attr['title'] = self.details['Title']
 
 	def programId(self):
+		if 'programid' in self.attr:
+			return self.attr['programid']
 		id = self.details['ProgramId']
 		show = ('00' + id[2:-4])[-8:]
 		episode = id[-4:]
@@ -467,6 +478,8 @@ class TivoVideo(Asset):
 		return '%s%s%s' % (id[:2], show, episode)
 
 	def showId(self):
+		if 'showid' in self.attr:
+			return self.attr['showid']
 		id = self.details['ProgramId']
 		show = ('00' + id[2:-4])[-8:]
 		eptype = id[:2]
@@ -475,11 +488,15 @@ class TivoVideo(Asset):
 		return '%s%s' % (eptype, show)
 
 	def name(self):
-		title = self.details['Title']
-		if 'ProgramId' in self.details:
-			title = '[%s] %s' % (self.programId(), title)
+		title = self.attr['title']
+		if 'programid' in self.attr:
+			title = '[%s] %s' % (self.attr['programid'], title)
 		if 'EpisodeTitle' in self.details:
 			title = '%s - %s' % (title, self.details['EpisodeTitle'])
+		if 'name' in self.server.attr:
+			title = '%s (on %s)' % (title, self.server.attr['name'])
+		else:
+			title = '%s (on %s)' % (title, self.server.id)
 		if 'SourceSize' in self.details:
 			title = '%s (%s)' % (title, formatFilesize(self.details['SourceSize']))
 		return title
@@ -645,25 +662,48 @@ task.avail_transforms.add(DecryptTivoVideoTD())
 if __name__ == '__main__':
 	env = task.ObservableEnvironment()
 	goalAsset = base.AssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
-	matchAsset = base.AssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
+#	matchAsset = base.AssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
 	goal = task.Goal(goalAsset)
 	tasks = task.TaskController(env)
-	tasks.addTask(task.GoalTask(env, goal))
+	goalTask = task.GoalTask(env, goal)
+	tasks.addTask(goalTask)
 
 	try:
 		while True:
 			tasks.handleMessages(True, 60)
 			tasks.dump()
 			
-			if 'TivoVideo' in env.assetsByType:
-				videos = env.assetsByType['TivoVideo']
-				#shows = {}
-				for video in sorted(videos.itervalues(), key=TivoVideo.programId, reverse=True):
-					#video = videos[key]
-					if video.satisfies(matchAsset):
-						downloadTask = DownloadTivoVideo().newTask(env,(video,),(TivoVideoDownload('c:\\stuff\\supermake\\test.tivo', video.server.id),))
-						tasks.addTask(downloadTask)
-						break
+			nextStep = set()
+			for element in goalTask.library:
+				if not goal.getUnresolvedSpecDependancies(element, env):
+					print "proposed: %s" % element
+					nextStep.add((element.transforms[0],element.extras))
+
+#			print "begin %s steps" % nextStep
+			for next in nextStep:
+				step = next[0]
+				extras = next[1]
+				instances = goal.resolveSpecDependancies(step.spec(), env, extras)
+				runningTasks = tasks.tasksByTransform(step)
+				for instance in instances:
+					if runningTasks is None or not step.isRunning(runningTasks,instance,None):
+						print instance
+			print "end"
+
+#						try:
+#							tasks.addTask(step.newTask(env,instance,None))
+#						except TaskLaunchError as e:
+#							pass
+
+#			if 'TivoVideo' in env.assetsByType:
+#				videos = env.assetsByType['TivoVideo']
+#				shows = {}
+#				for video in sorted(videos, key=TivoVideo.programId, reverse=True):
+#					#video = videos[key]
+##					if video.satisfies(matchAsset):
+##						downloadTask = DownloadTivoVideo().newTask(env,(video,),(TivoVideoDownload('c:\\stuff\\supermake\\test.tivo', video.server.id),))
+##						tasks.addTask(downloadTask)
+##						break
 #					title = video.details['Title']
 #					showID = video.showId()
 #					if not showID in shows:

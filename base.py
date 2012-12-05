@@ -1,4 +1,32 @@
 import copy
+import collections
+
+class FrozenDict(collections.Mapping):
+    """Don't forget the docstrings!!"""
+    def __init__(self, *args, **kwargs):
+        self._d = dict(*args, **kwargs)
+        self._hash = None
+    def __iter__(self):
+        return iter(self._d)
+    def __len__(self):
+        return len(self._d)
+    def __getitem__(self, key):
+        return self._d[key]
+	def __repr__(self):
+		return "frozendict(%r)" % self._d
+	def __str__(self):
+		return "frozendict(%s)" % self._d
+    def __hash__(self):
+        # It would have been simpler and maybe more obvious to 
+        # use hash(tuple(sorted(self._d.iteritems()))) from this discussion
+        # so far, but this solution is O(n). I don't know what kind of 
+        # n we are going to run into, but sometimes it's hard to resist the 
+        # urge to optimize when it will gain improved algorithmic performance.
+        if self._hash is None:
+            self._hash = 0
+            for pair in self.iteritems():
+                self._hash ^= hash(pair)
+        return self._hash
 
 class Asset(object):
 	def __init__(self, type):
@@ -40,6 +68,7 @@ class TransformSpec(object):
 		if self.produces is not None:
 			self.produces = frozenset(self.produces)
 		self.transforms = None
+		self.extras = None
 	def __repr__(self):
 		result = '<Transform:'
 		if self.requires is not None:
@@ -51,15 +80,24 @@ class TransformSpec(object):
 		if self.produces is not None:
 			result = result + ' produces=' + str(self.produces)
 		if self.transforms is not None:
-			result = result +  'transforms=' + str(self.transforms)
+			result = result + ' transforms=' + str(self.transforms)
+		if self.extras is not None:
+			result = result + ' extras=' + str(self.extras)
 		return result + '>'
 
 	def __ne__(self, other):
-		return self.transforms != other.transforms
+		return (self.transforms != other.transforms) or (self.extras == other.extras)
 	def __eq__(self, other):
-		return self.transforms == other.transforms
+		return (self.transforms == other.transforms) and (self.extras == other.extras)
 	def __hash__(self):
-		return hash(self.transforms)
+		if self.extras is None:
+			return hash(self.transforms)
+		elif self.transforms is None:
+			return hash(self.extras)
+		else:
+			temp = list(self.transforms)
+			temp.extend(self.extras)
+			return hash(tuple(temp))
 
 	def canProduce(self, asset):
 		if self.produces is None:
@@ -72,7 +110,7 @@ class TransformSpec(object):
 		if self.produces is None:
 			return None
 		for val in self.produces:
-			if asset.type == val.type and asset.weaklySatisfiedBy(val):
+			if asset.type == val.type and asset.weaklySatisfiedBy(val) is not None:
 				return val
 		return None
 	def joinableAsChild(self, child):
@@ -113,29 +151,29 @@ class TransformSpec(object):
 			tempChild.requires = set()
 			for val in child.requires:
 				val = val.copy()
-				tempChild.requires.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = self.canProduce(val)
-				if produces is not None:
-					val.mergeAsset(produces, replList)
+				tempChild.requires.add(val)
+				products = self.canProduce(val)
+				if products is not None:
+					val.mergeAsset(products, replList)
 		if child.consumes is not None:
 			tempChild.consumes = set()
 			for val in child.consumes:
 				val = val.copy()
-				tempChild.consumes.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = self.canProduce(val)
-				if produces is not None:
-					val.mergeAsset(produces, replList)
+				tempChild.consumes.add(val)
+				products = self.canProduce(val)
+				if products is not None:
+					val.mergeAsset(products, replList)
 		if child.locks is not None:
 			tempChild.locks = set()
 			for val in child.locks:
 				val = val.copy()
-				tempChild.locks.add(val)
 				val.instantiatePlaceholder(replList)
-				produces = self.canProduce(val)
-				if produces is not None:
-					val.mergeAsset(produces, replList)
+				tempChild.locks.add(val)
+				products = self.canProduce(val)
+				if products is not None:
+					val.mergeAsset(products, replList)
 		
 		# the following rules are the results of me drawing everything up on a grid, hopefully they make sense
 		#		consumes		+		consumes		->		consumes(+copy)
@@ -160,18 +198,18 @@ class TransformSpec(object):
 
 		# first handle parent consumption and child production
 		if self.consumes is not None:
+			if newSpec.consumes is None:
+				newSpec.consumes = set()
 			for val in self.consumes:
-				if newSpec.consumes is None:
-					newSpec.consumes = set()
 				newSpec.consumes.add(val)
 		if child.produces is not None:
 			tempChild.produces = set()
+			if newSpec.produces is None:
+				newSpec.produces = set()
 			for val in child.produces:
 				val = val.copy()
-				tempChild.produces.add(val)
 				val.instantiatePlaceholder(replList)
-				if newSpec.produces is None:
-					newSpec.produces = set()
+				tempChild.produces.add(val)
 				newSpec.produces.add(val)
 				
 		# now handle parent production and child consumption
@@ -249,6 +287,16 @@ class TransformSpec(object):
 		else:
 			newSpec.transforms.append(child)
 
+		newSpec.extras = None
+		if self.extras is not None:
+			newSpec.extras = dict(self.extras)
+		if child.extras is not None:
+			if newSpec.extras is None:
+				newSpec.extras = dict(child.extras)
+			else:
+				newSpec.extras.update(child.extras)
+
+		# freeze the new spec
 		if newSpec.requires is not None:
 			newSpec.requires = frozenset(newSpec.requires)
 		if newSpec.consumes is not None:
@@ -257,8 +305,9 @@ class TransformSpec(object):
 			newSpec.locks = frozenset(newSpec.locks)
 		if newSpec.produces is not None:
 			newSpec.produces = frozenset(newSpec.produces)
-		if newSpec.transforms is not None:
-			newSpec.transforms = tuple(newSpec.transforms)
+		newSpec.transforms = tuple(newSpec.transforms)
+		if newSpec.extras is not None:
+			newSpec.extras = FrozenDict(newSpec.extras)
 
 		return newSpec
 		
@@ -303,18 +352,25 @@ class AssetPlaceholder(Asset):
 				return False
 		return True
 	def weaklySatisfiedBy(self, target):
+		extras = {}
 		if self.type != target.type:
-			return False
+			return Empty
 		if not isinstance(target, AssetPlaceholder):
 			return target.satisfies(self)
 		for attr in self.attr:
+			if attr not in target.attr:
+				extras[attr] = self.attr[attr]
 			if attr in target.attr and not isinstance(target.attr[attr], TransformPlaceholder) and not isinstance(self.attr[attr], TransformPlaceholder) and self.attr[attr] != target.attr[attr]:
-				return False
-		return True
+				return Empty
+		return extras
 	def instantiatePlaceholder(self, replList):
 		for attr in self.attr:
 			if self.attr[attr] in replList:
 				self.attr[attr] = replList[self.attr[attr]]
+	def findReplacements(self, other, replList):
+		for attr in self.attr:
+			if isinstance(self.attr[attr], TransformPlaceholder) and attr in other.attr:
+				replList[self.attr[attr]] = other.attr[attr]
 	def mergeAsset(self, other, replList = None):
 		for attr in self.attr:
 			if isinstance(self.attr[attr], TransformPlaceholder) and attr in other.attr:
