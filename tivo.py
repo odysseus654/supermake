@@ -1,4 +1,4 @@
-import socket, traceback, time, thread, urllib2, urllib, urlparse, sys, xml.sax, cookielib
+import socket, traceback, time, thread, urllib2, urllib, urlparse, sys, xml.sax, cookielib, json, os.path
 import base, task
 from base import Asset, Transform, AssetPlaceholder
 from task import ThreadTask, TaskLaunchError
@@ -554,7 +554,7 @@ class DownloadTivoVideo(Transform):
 		query = TivoServerQuery(mediaKey)
 		req = query.openSimplePath(query.crackUrl(infile.links['Content']['Url']))
 		file = outfile.open('wb')
-		return FileCopyTask(outfile, req, file)
+		return TivoDownloadTask(outfile, req, file, infile.server, env)
 
 class FileCopyTask(ThreadTask):
 	def __init__(self, asset, src, dest):
@@ -563,12 +563,10 @@ class FileCopyTask(ThreadTask):
 		self.src = src
 		self.dest = dest
 		self.block = 1024*1024
-	
 	def name(self):
 		return "Stream Copy Task: %s" % self.asset
 	def stop(self):
 		self.threadStatus = ThreadTask.thrCANCELLING
-		
 	def run(self):
 		try:
 			while self.threadStatus == ThreadTask.thrRUNNING:
@@ -580,22 +578,37 @@ class FileCopyTask(ThreadTask):
 			self.src.close()
 			self.dest.close()
 
+class TivoDownloadTask(FileCopyTask):
+	def __init__(self, asset, src, dest, server, env):
+		FileCopyTask.__init__(self, asset, src, dest)
+		self.server = server
+		self.env = env
+	def run(self):
+		FileCopyTask.run(self)
+		if self.status == task.Task.tsRUNNING:
+			self.env.declareAsset(self.asset)
+	
+
 class FileAsset(Asset):
 	def __init__(self, type, filename):
 		Asset.__init__(self, type)
 		self.filename = filename
-		
 	def name(self):
 		return self.filename
-		
 	def open(self, mode):
 		return open(self.filename, mode)
 
 class TivoVideoDownload(FileAsset):
 	def __init__(self, filename, mediaKey):
-		FileAsset.__init__(self, 'TivoVideo', filename)
+		FileAsset.__init__(self, 'TivoVideoDownload', filename)
 		self.details = {}
 		self.mediaKey = mediaKey
+	def satisfies(self, require):
+		if self.type != require.type:
+			return False
+		if not isinstance(require, AssetPlaceholder):
+			return self == require
+		return True
 
 ###############################################################################
 
@@ -660,52 +673,72 @@ task.avail_transforms.add(DecryptTivoVideoTD())
 
 ###############################################################################
 if __name__ == '__main__':
+	import taskui
 	env = task.ObservableEnvironment()
-	goalAsset = base.AssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
-#	matchAsset = base.AssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
+	
+#	goalAsset = base.AssetPlaceholder('MpegVideo', {'title':'Mythbusters'})
+	goalAsset = base.AssetPlaceholder('TivoVideoDownload', base.FrozenDict({'title':'Mythbusters'}))
+	mythAsset = base.AssetPlaceholder('TivoVideo', {'title':'Mythbusters'})
+	futuramaAsset = base.AssetPlaceholder('TivoVideo', {'title':'Futurama'})
+	expanseAsset = base.AssetPlaceholder('TivoVideo', {'title':'The Expanse'})
+	wormholeAsset = base.AssetPlaceholder('TivoVideo', {'title':'Through the Wormhole With Morgan Freeman'})
+
 	goal = task.Goal(goalAsset)
 	tasks = task.TaskController(env)
 	goalTask = task.GoalTask(env, goal)
 	tasks.addTask(goalTask)
+	downloadTask = None
+	rootDir = 'h:\\makestage\\'
 
+	taskui.threadFrameTest(env, tasks)
 	try:
 		while True:
 			tasks.handleMessages(True, 60)
 			tasks.dump()
 			
-			nextStep = set()
-			for element in goalTask.library:
-				if not goal.getUnresolvedSpecDependancies(element, env):
-					print "proposed: %s" % element
-					nextStep.add((element.transforms[0],element.extras))
+#			nextStep = set()
+#			for element in goalTask.library:
+#				if not goal.getUnresolvedSpecDependancies(element, env):
+#					print "proposed: %s" % element
+#					nextStep.add((element.transforms[0],element.extras))
+#
+##			print "begin %s steps" % nextStep
+#			for next in nextStep:
+#				step = next[0]
+#				extras = next[1]
+#				print "step: %s" % step
+#				instances = goal.resolveSpecDependancies(step.spec(), env, extras)
+#				runningTasks = tasks.tasksByTransform(step)
+#				for instance in instances:
+#					if runningTasks is None or not step.isRunning(runningTasks,instance,None):
+#						print instance
+##						try:
+##							tasks.addTask(step.newTask(env,instance,None))
+##						except TaskLaunchError as e:
+##							pass
+###						downloadTask = DownloadTivoVideo().newTask(env,(video,),(TivoVideoDownload('c:\\stuff\\supermake\\test.tivo', video.server.id),))
+###						tasks.addTask(downloadTask)
+###						break
+#			print "end"
 
-#			print "begin %s steps" % nextStep
-			for next in nextStep:
-				step = next[0]
-				extras = next[1]
-				instances = goal.resolveSpecDependancies(step.spec(), env, extras)
-				runningTasks = tasks.tasksByTransform(step)
-				for instance in instances:
-					if runningTasks is None or not step.isRunning(runningTasks,instance,None):
-						print instance
-			print "end"
-
-#						try:
-#							tasks.addTask(step.newTask(env,instance,None))
-#						except TaskLaunchError as e:
-#							pass
-
-#			if 'TivoVideo' in env.assetsByType:
-#				videos = env.assetsByType['TivoVideo']
-#				shows = {}
-#				for video in sorted(videos, key=TivoVideo.programId, reverse=True):
-#					#video = videos[key]
-##					if video.satisfies(matchAsset):
-##						downloadTask = DownloadTivoVideo().newTask(env,(video,),(TivoVideoDownload('c:\\stuff\\supermake\\test.tivo', video.server.id),))
-##						tasks.addTask(downloadTask)
-##						break
-#					title = video.details['Title']
+			if 'TivoVideo' in env.assetsByType and (not downloadTask or downloadTask.status != task.Task.tsRUNNING):
+				videos = env.assetsByType['TivoVideo']
+				shows = {}
+				targets = {}
+				for video in sorted(videos, key=TivoVideo.programId, reverse=True):
+					#video = videos[key]
+					if video.satisfies(mythAsset) or video.satisfies(futuramaAsset) or video.satisfies(expanseAsset) or video.satisfies(wormholeAsset):
+						id = video.details['ProgramId']
+						videoAsset = TivoVideoDownload(rootDir + id + '.tivo', video.server.id)
+						if not os.path.isfile(videoAsset.filename):
+							metaFile = open(rootDir + id + '.json', 'w')
+							metaFile.write(json.dumps(video.details))
+							metaFile.close()
+							downloadTask = DownloadTivoVideo().newTask(env,(video,),(videoAsset,))
+							tasks.addTask(downloadTask)
+							break
 #					showID = video.showId()
+#					title = video.details['Title']
 #					if not showID in shows:
 #						shows[showID] = title
 #				for showID in shows:
@@ -714,10 +747,16 @@ if __name__ == '__main__':
 #				for showID in shows:
 #					if showID[:2] != 'SH':
 #						print '%s: %s' % (showID, shows[showID])
-				
+			
 #			for assetType in env.assetsByType:
 #				for key in env.assetsByType[assetType]:
 #					print env.assetsByType[assetType][key]
+			if 'TivoVideo' in env.assetsByType and (not downloadTask or (downloadTask.status != task.Task.tsQUEUED and downloadTask.status != task.Task.tsRUNNING)):
+				print 'Videos seen but nothing to download!'
+				for thisTask in tasks.tasks:
+					if thisTask is TivoServerVideoDiscovery:
+						thisTask.start()
+						break;
 	finally:
 		print "Requesting shutdown..."
 		tasks.stop()
