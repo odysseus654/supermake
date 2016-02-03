@@ -286,48 +286,50 @@ class TivoServerQuery(object):
 		print "retrieving: " + fullAddr
 		return self.opener.open(fullAddr)
 
-	def getVideoList(self, startAddr, threadTask = None):
+	def getVideoList(self, startAddr, threadTask = None, threadSeq = 0):
 		req = self.openXmlPath(startAddr)
 		if 'TiVoContainer' in req:
 			req = req['TiVoContainer']
+			contType = req['Details']['ContentType']
+			videos = {}
+			if contType == 'x-tivo-container/tivo-server':
+				videos.update(self.handleFolderList(req, threadTask, threadSeq))
+			elif contType == 'x-tivo-container/tivo-videos':
+				videos.update(self.handleVideoList(req, threadTask, threadSeq))
 			if type(req['Item']) == type([]):
-				thisReq = req
-				while threadTask is None or threadTask.threadStatus == ThreadTask.thrRUNNING:
-					if int(thisReq['ItemStart']) + int(thisReq['ItemCount']) < int(thisReq['Details']['TotalItems']):
-						newAddr = dict(startAddr)
-						newAddr['args']['AnchorOffset'] = int(thisReq['ItemStart']) + self.REQUEST_SIZE
-						thisReq = self.openXmlPath(newAddr)
-						if 'TiVoContainer' in thisReq:
-							thisReq = thisReq['TiVoContainer']
-							if type(thisReq['Item']) != type([]):
-								thisReq['Item'] = [thisReq['Item']]
-							req['Item'] = req['Item'] + thisReq['Item']
-							req['ItemCount'] = int(req['ItemCount']) + int(thisReq['ItemCount'])
+				while threadTask is None or threadTask.seqValid(threadSeq):
+					if int(req['ItemStart']) + int(req['ItemCount']) < int(req['Details']['TotalItems']):
+						newAddr = startAddr.copy()
+						newAddr['args']['AnchorOffset'] = int(req['ItemStart']) + self.REQUEST_SIZE
+						req = self.openXmlPath(newAddr)
+						if 'TiVoContainer' in req:
+							req = req['TiVoContainer']
+							contType = req['Details']['ContentType']
+							if contType == 'x-tivo-container/tivo-server':
+								videos.update(self.handleFolderList(req, threadTask, threadSeq))
+							elif contType == 'x-tivo-container/tivo-videos':
+								videos.update(self.handleVideoList(req, threadTask, threadSeq))
 						else:
 							break	# protocol fault?
 					else:
 						break
-			contType = req['Details']['ContentType']
-			if contType == 'x-tivo-container/tivo-server':
-				return self.handleFolderList(req, threadTask)
-			elif contType == 'x-tivo-container/tivo-videos':
-				return self.handleVideoList(req)
+			return videos
 
-	def handleFolderList(self, req, threadTask = None):
+	def handleFolderList(self, req, threadTask = None, threadSeq = 0):
 		folders = req['Item']
 		if type(folders) != type([]):
 			folders = [folders]
 		for folder in folders:
 			contType = folder['Details']['ContentType']
 			if contType == 'x-tivo-container/tivo-videos':
-				return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']), threadTask)
+				return self.getVideoList(self.crackUrl(folder['Links']['Content']['Url']), threadTask, threadSeq)
 
 	def tivoId(self, item):
 		if 'TiVoVideoDetails' in item['Links']:
 			cracked = self.crackUrl(item['Links']['TiVoVideoDetails']['Url'])
 			return int(cracked['args']['id'])
 
-	def handleVideoList(self, req):
+	def handleVideoList(self, req, threadTask = None, threadSeq = 0):
 		videos = {}
 		items = req['Item']
 		if type(items) != type([]):
@@ -336,7 +338,11 @@ class TivoServerQuery(object):
 			if 'Available' in item['Links']['Content'] and item['Links']['Content']['Available'] == 'No':
 				pass
 			else:
-				videos[self.tivoId(item)] = self.handleVideo(item)
+				newVideo = self.handleVideo(item)
+				tivoId = self.tivoId(item)
+				videos[tivoId] = newVideo
+				if threadTask is not None:
+					threadTask.foundVideo(threadSeq, tivoId, newVideo)
 		return videos
 
 	def handleVideo(self, item):
@@ -423,6 +429,8 @@ class TivoServerVideoDiscovery(ThreadTask):
 		self.xform = xform
 		self.tivo = tivo
 		self.env = env
+		self.reqSeq = 0
+		self.reqExistVideos = None
 	
 	def name(self):
 		return "Tivo Video Discovery %s" % self.tivo
@@ -434,24 +442,40 @@ class TivoServerVideoDiscovery(ThreadTask):
 	def run(self):
 		addr = self.tivo.tivoAddr()
 		if addr is not None:
-			videoList = TivoServerQuery(self.tivo.mediaKey).getVideoList(addr, self)
-			videos = env.getAssetsByType('TivoVideo')
-			
-			# check for updated videos
-			newVideos = dict(videoList)
-			if videos is not None:
-				for video in videos:
+			self.reqExistVideos = {}
+			existVideos = env.getAssetsByType('TivoVideo')
+			if existVideos is not None:
+				for video in existVideos:
 					if video.server == self.tivo:
-						if video.tivoId in newVideos:
-							del newVideos[video.tivoId]
-						else:
-							env.undeclareAsset(video)
-							video.close()
-
-			# check for added assets
-			for videoKey in newVideos:
-				newVideo = TivoVideo(videoKey, self.tivo, videoList[videoKey])
-				env.declareAsset(newVideo)
+						self.reqExistVideos[video.tivoId] = video
+			
+			seq = self.reqSeq + 1
+			self.reqSeq = seq
+			with self.tivo.lock:
+				videoList = TivoServerQuery(self.tivo.mediaKey).getVideoList(addr, self, seq)
+			
+			if self.seqValid(seq):
+				# check for deleted videos
+				newVideos = dict(videoList)
+				for video in self.reqExistVideos:
+					if video.tivoId not in newVideos:
+						env.undeclareAsset(video)
+						video.close()
+			
+	def seqValid(self, seq):
+		if self.threadStatus != ThreadTask.thrRUNNING:
+			return False
+		if seq != self.reqSeq:
+			return False
+		return True
+			
+	def foundVideo(self, seq, tivoId, video):
+		if not self.seqValid(seq):
+			return False
+		# check for added assets
+		if tivoId not in self.reqExistVideos:
+			newVideo = TivoVideo(tivoId, self.tivo, video)
+			env.declareAsset(newVideo)
 
 ###############################################################################
 class TivoVideo(Asset):

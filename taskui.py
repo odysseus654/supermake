@@ -27,8 +27,8 @@ class AssetsTab(wx.gizmos.TreeListCtrl):
 	def __init__(self, parent, env):
 		wx.gizmos.TreeListCtrl.__init__(self, parent=parent, id=wx.ID_ANY, style=wx.TR_DEFAULT_STYLE|wx.TR_TWIST_BUTTONS|wx.TR_HIDE_ROOT)
 		self.env = env
-		self.assets = dict()
-		self.tivo = dict()
+		self.assets = {}
+		self.tivo = {}
 		self.AddColumn("")
 		self.root = self.AddRoot(text="Hidden Root")
 		self.SetMainColumn(0) # the one with the tree in it...
@@ -55,7 +55,7 @@ class AssetsTab(wx.gizmos.TreeListCtrl):
 			if showId != obj.programId():
 				shows = None
 				if obj.server not in self.tivo:
-					shows = dict()
+					shows = {}
 					self.tivo[obj.server] = shows
 				else:
 					shows = self.tivo[obj.server]
@@ -79,7 +79,7 @@ class TasksTab(wx.ListCtrl):
 	def __init__(self, parent, tasks):
 		wx.ListCtrl.__init__(self, parent=parent, id=wx.ID_ANY, style=wx.LC_REPORT)
 		self.controller = tasks
-		self.tasks = dict()
+		self.tasks = {}
 		self.InsertColumn(0, "")
 		self.Bind(EVT_NOTIFY, self.onNotifyUi)
 		self.controller.addObserver(self.onNotifyAsync)
@@ -114,7 +114,7 @@ class GoalsTab(wx.ListCtrl):
 	def __init__(self, parent, tasks):
 		wx.ListCtrl.__init__(self, parent=parent, id=wx.ID_ANY, style=wx.LC_REPORT)
 		self.controller = tasks
-		self.tasks = dict()
+		self.tasks = {}
 		self.InsertColumn(0, "")
 		self.Bind(EVT_NOTIFY, self.onNotifyUi)
 		self.controller.addObserver(self.onNotifyAsync)
